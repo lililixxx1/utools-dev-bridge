@@ -1,0 +1,77 @@
+{
+  "logo": "logo.png",
+  "preload": "preload/index.js",
+  "version": "0.2.0",
+  "name": "devbridge",
+  "pluginName": "开发桥 dev-bridge",
+  "description": "面向 AI Agent 的 uTools 插件开发测试桥:沙箱加载目标插件 preload,支持调用/日志/调用流水/副作用还原",
+  "author": "local",
+  "platform": ["win32", "darwin", "linux"],
+  "tools": {
+    "dev_load": {
+      "description": "加载或热重载一个待测 uTools 插件:读取其 plugin.json 定位 preload 并在隔离 vm 沙箱执行(mode=plugin),或直接执行任意 JS 文件(mode=file)。每次调用重建沙箱=热重载生效(services 子模块级)。返回可调用清单(名字/参数个数/源码预览)、注册的生命周期回调、警告(含装载期模块拦截汇总)。副作用类 utools API 默认 stub(allowSideEffects=true 放行);Node 内置模块白名单门控:fs 写副作用走写日志可还原,child_process/http/electron 等默认懒拒绝(allowHostModules 放行)。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "description": "目标插件根目录(内含 plugin.json)或 preload 文件或任意 .js 的绝对路径" },
+          "mode": { "type": "string", "enum": ["plugin", "file"], "default": "plugin", "description": "plugin=按 uTools 插件结构加载;file=直接执行单个 JS 文件" },
+          "allowSideEffects": { "type": "boolean", "default": false, "description": "true 时破坏性 utools API(剪贴板/键鼠/shell/通知/AI计费等)不再 stub,真实执行。谨慎使用" },
+          "allowHostModules": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Node 内置模块门控:true 全放行;数组=按名白名单(如 [\"electron\"]);默认 false(未列入白名单的内置模块懒拒绝,fs 写副作用仍走写日志)", "default": false },
+          "timeoutMs": { "type": "integer", "default": 10000, "minimum": 1000, "maximum": 60000, "description": "入口顶层同步执行超时" }
+        },
+        "required": ["path"]
+      }
+    },
+    "dev_call": {
+      "description": "调用已加载插件的导出函数。name 为清单中的路径(如 airss.db.getFeeds);特殊名:__enter 触发 onPluginEnter(args=[{code,type,payload}]),__out/__detach 触发 onPluginOut/onPluginDetach,__mainPush 触发 onMainPush,__dbPull 触发 onDbPull(args=[{docs}]),__domReady 触发 document 的 DOMContentLoaded 监听。返回 {ok,result|error,durationMs,consoleFrom,callsFrom} 及期间新增日志游标。同步死循环受 timeoutMs 保护,超时后沙箱自动重建。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "description": "清单中的导出路径,或 __enter" },
+          "args": { "type": "array", "description": "位置参数数组", "default": [] },
+          "timeoutMs": { "type": "integer", "default": 30000, "minimum": 1000, "maximum": 300000, "description": "同步执行硬超时与异步软超时;AI/网络类长任务按需调大" }
+        },
+        "required": ["name"]
+      }
+    },
+    "dev_list": {
+      "description": "列出当前已加载目标的状态(路径/模式/加载时间/是否自动重建)与全部可调用导出清单,不重载。",
+      "inputSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+    },
+    "dev_console": {
+      "description": "读取被测代码的 console 输出与未捕获异常(环形500条)。since 传上次返回的最大 seq 做增量;被环形覆盖时返回 expired:true 请全量重取。clear:true 清空。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "since": { "type": "integer", "default": 0, "description": "只返回 seq 大于该值的条目" },
+          "clear": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    "dev_calls_log": {
+      "description": "读取被测代码的调用流水(深代理逐叶子记录 utools 调用含 db.promises.*,另含 fs.* 写操作与 require:<模块>.<属性> 拦截)。条目含 api/参数摘要/结果或异常/stubbed/denied/untracked 标记。since 增量语义同 dev_console。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "since": { "type": "integer", "default": 0 },
+          "clear": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    "dev_cleanup": {
+      "description": "按写日志逆序还原测试期间的数据副作用:db put/bulkDocs/remove 恢复前态或删除(bulkDocs 新建的文档回滚时删除),dbStorage/dbCryptoStorage 键还原,附件 best-effort 还原/删除,fs 写操作恢复写前内容(前态超限的破坏性操作已被默认拒绝;写类超限项以 untracked 列出)。还原失败的条目保留可重试(retryable;注意重试可能过度还原——配对条目已执行完毕,必要时用 dropAll 处置)。写日志跨 uTools 重启持久化(spill 于临时目录,系统清理会导致无法还原)。网络/进程副作用不在回收范围。dropAll=true 时跳过回放直接清空写日志、现场保持现状(仅在人工核对终态后使用,以响应 dropped:true 判定生效)。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "force": { "type": "boolean", "default": false, "description": "true 时放弃所有无法还原/重试失败的条目并清空写日志(spill 丢失导致 journal 永久悬挂时的出口)" },
+          "dropAll": { "type": "boolean", "default": false, "description": "true 时跳过回放,直接清空写日志、现场保持现状(先杀目标定时器)。仅在已人工核对当前 db/kv/fs 状态符合预期(或残留条目有意保留)时使用,如:实测后确认终态、清除历史遗留孤儿文档;与 force 同传时 dropAll 优先" }
+        }
+      }
+    }
+  }
+}

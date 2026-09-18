@@ -1,0 +1,8 @@
+{
+  "preload": "preload/index.js",
+  "name": "rt-check",
+  "pluginName": "真机回归套件 rt-check",
+  "description": "dev-bridge 真机回归目标插件:在真实 uTools 沙箱内跑断言,覆盖纯 Node mock 测不出的宿主差异",
+  "version": "0.1.0",
+  "author": "local"
+}

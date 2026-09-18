@@ -1,0 +1,4 @@
+{
+ "preload": "preload/index.js",
+ "logo": "logo.png"
+}
