@@ -1,6 +1,6 @@
 # AGENTS.md — utools-dev-bridge 工作须知
 
-uTools 插件开发测试桥:**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。让 agent 经 uTools MCP 网关(`http://127.0.0.1:3501/mcp`)沙箱加载/调用/调试任意 uTools 插件的 preload,并还原测试副作用。非 git 仓库,无 npm 依赖、无构建/打包步骤。
+uTools 插件开发测试桥:**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。让 agent 经 uTools MCP 网关(`http://127.0.0.1:3501/mcp`)沙箱加载/调用/调试任意 uTools 插件的 preload,并还原测试副作用。git 仓库(公开于 https://github.com/lililixxx1/utools-dev-bridge),无 npm 依赖、无构建/打包步骤。
 
 ## 目录
 
@@ -10,6 +10,7 @@ uTools 插件开发测试桥:**纯 AI 插件,无 UI**(plugin.json 只有 logo/pr
 - `scripts/rt-check/` — 真机回归目标插件(`runAll(filter?)` + `probeHost()`,经 dev_* 工具在真实 uTools 里跑)。
 - `scripts/fixtures/` — demo-plugin / loop-plugin 假目标。
 - `scripts/gw-call.js` — 网关直连兜底(绕过 MCP 客户端 schema 缓存与 30s 掐断;仅回环,key 不打印)。
+- `scripts/gsm-harness.js` / `scripts/final-restore.js` — 经桥跑的业务插件 harness 示例 / 单进程背靠背还原范式(见 gotchas)。
 - `README.md` — 工作流、副作用与安全约定(必读)、排障表;`PLAN.md` — v3 设计与 v3.1 热修史。改桥行为前两份都要对照。
 
 ## 命令
@@ -17,6 +18,7 @@ uTools 插件开发测试桥:**纯 AI 插件,无 UI**(plugin.json 只有 logo/pr
 ```bash
 node scripts/selftest.js        # 唯一本地测试;改 preload/index.js 后必跑(在仓库根目录下)
 node scripts/gw-call.js <tool> '<json>'   # 直连网关调 dev_* 工具(自动读本机 key、补 utools.dev_zii2hjtj. 前缀)
+git push                        # 改动直接提交 main 并推送;提交信息走 Conventional Commits、全中文
 ```
 
 真机回归:uTools 里经 dev_load 加载 `scripts/rt-check`,dev_call `runAll`/`probeHost`,断言全绿。改 preload 后需在 uTools 开发者工具里重载插件(或重启 uTools)才生效——冷启动回退见 README。
@@ -39,6 +41,8 @@ node scripts/gw-call.js <tool> '<json>'   # 直连网关调 dev_* 工具(自动�
 - dev_cleanup 语义:`dropAll` 跳过回放(仅人工核对终态后用)、`force` 放弃失败条目;retryable 重试可能过度还原。还原模型假设无沙箱外并发写同一 db。
 - 安全口径:门控是防意外的卫生措施,**不是安全边界**(vm 注入宿主对象可逃逸、`.node` 透传绕过门控);网关仅绑回环,key 即边界。不要试图"修补"逃逸口(PLAN 明确非目标)。
 
-## 交付状态(2026-09-17)
+## 交付状态(2026-09-18)
 
 v3.1 闭环:airss 全功能实测完毕,孤儿文档缺陷已修(bulkDocs 无前态回滚删除,selftest 5c 复刻),终态已清零。新增能力:生命周期特殊名(`__enter/__out/__detach/__mainPush/__dbPull/__domReady`)、DOM 极简 stub(选择器恒 null)、fs 写日志 WAL(前态先落盘,8MB/500 文件/64MB 上限)。
+
+2026-09-18:建 git 仓库并公开(github.com/lililixxx1/utools-dev-bridge),初始提交收录全部 20 文件;文档同步公开口径。

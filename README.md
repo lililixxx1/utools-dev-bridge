@@ -2,6 +2,23 @@
 
 让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。
 
+> 仓库:https://github.com/lililixxx1/utools-dev-bridge
+
+## 目录结构
+
+| 路径 | 说明 |
+|---|---|
+| `preload/index.js` | 桥的全部实现(单文件 CommonJS;文件头注释 = 机制总览 + 错误码契约,改契约先改它) |
+| `plugin.json` | 插件清单 + 六个 dev_* 工具的 description/inputSchema |
+| `fallback-ui.html` / `logo.png` | 冷启动回退保活页(见下文)/ 图标 |
+| `scripts/selftest.js` | 纯 Node 自测(mock utools 后 require 桥,验证全链路;改 preload 后必跑) |
+| `scripts/rt-check/` | 真机回归目标插件(`runAll(filter?)` / `probeHost()`) |
+| `scripts/fixtures/` | demo-plugin / loop-plugin 假目标插件 |
+| `scripts/gw-call.js` | 网关直连兜底(schema 缓存 / 30s 掐断时用;仅回环,key 不打印) |
+| `scripts/gsm-harness.js` | github-stars-manager-for-utools 存储层真机 harness(经桥跑的业务插件断言示例) |
+| `scripts/final-restore.js` | 单进程背靠背终态还原范式(airss 孤儿清除实例) |
+| `AGENTS.md` / `PLAN.md` | 工作须知 / v3 设计与 v3.1 热修史 |
+
 ## 一次性安装(唯一人工步骤)
 
 1. uTools → 开发者工具(开发者插件)→ 加载本目录(`utools-dev-bridge/`,选含 plugin.json 的目录)
@@ -15,6 +32,14 @@
 "features": [{ "code": "devbridge", "explain": "开发桥(保活入口)", "cmds": ["开发桥"] }]
 ```
 并在 uTools 里打开一次"开发桥"让 preload 执行(每次重启 uTools 后需打开一次)。
+
+## 本地自测(无需 uTools)
+
+```bash
+node scripts/selftest.js   # 在仓库根目录下跑;mock utools 全局,验证桥全链路
+```
+
+改 `preload/index.js` 后必跑;通过再走真机回归(下节)。
 
 ## agent 工作流(测试循环)
 
