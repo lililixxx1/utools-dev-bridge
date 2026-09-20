@@ -5,7 +5,7 @@
   "features": [
     { "code": "devbridge", "description": "开发桥(AI 测试桥保活入口)", "cmds": ["开发桥"] }
   ],
-  "version": "0.3.1",
+  "version": "0.3.2",
   "name": "devbridge",
   "pluginName": "开发桥 dev-bridge",
   "description": "面向 AI Agent 的 uTools 插件开发测试桥:沙箱加载目标插件 preload,支持调用/日志/调用流水/副作用还原",
@@ -28,7 +28,7 @@
       }
     },
     "dev_call": {
-        "description": "调用已加载插件的导出函数。name 为清单中的路径(如 airss.db.getFeeds);特殊名:__enter 触发 onPluginEnter(args=[{code,type,payload,from}]),__out/__detach 触发 onPluginOut/onPluginDetach,__mainPush 触发 onMainPush,__dbPull 触发 onDbPull(args=[{docs}]),__ready 触发 onPluginReady,__schedule 触发 onScheduleTrigger(args=[{code}]),__domReady 触发 document 的 DOMContentLoaded 监听;__tool:<name> 调用目标 registerTool 注册的 MCP 工具处理器(args=[params],自动补 ToolContext 仿真 ctx,sendProgress 录入流水)。返回 {ok,result|error,durationMs,consoleFrom,callsFrom} 及期间新增日志游标。同步死循环受 timeoutMs 保护,超时后沙箱自动重建。",
+        "description": "调用已加载插件的导出函数,name 为清单中的路径(如 airss.db.getFeeds)。特殊名:__enter 触发 onPluginEnter(args=[{code,type,payload,from}]);__out/__detach 触发 onPluginOut/Detach;__mainPush/__dbPull(args=[{docs}])/__ready/__schedule(args=[{code}])触发对应回调;__domReady 触发 DOMContentLoaded;__tool:<名>(args=[params])调用目标 registerTool 的工具处理器,自动补仿真 ctx(sendProgress 录入流水)。返回 {ok,result|error,durationMs,consoleFrom,callsFrom}。死循环受 timeoutMs 保护,超时后沙箱自动重建。",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

@@ -2,7 +2,7 @@
 
 让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + 一页保活入口,见下文)。
 
-> uTools 8.0 公测适配版(v0.3.1):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具把 `features` 标为必填,清单已内置保活入口。
+> uTools 8.0 公测适配版(v0.3.2):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具把 `features` 标为必填、工具 `description` 限 ≤500 字符,均已适配。
 
 > 仓库:https://github.com/lililixxx1/utools-dev-bridge
 

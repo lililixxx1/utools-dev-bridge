@@ -49,4 +49,6 @@ v3.1 闭环:airss 全功能实测完毕,孤儿文档缺陷已修(bulkDocs 无前
 
 2026-09-20 热修(0.3.1):真机反馈 8.0 开发者工具安装报"plugin.json features 无效"——8.0 校验器把 features 标必填,AI-only(tools-only)清单不再被容忍。plugin.json 内置 `main: fallback-ui.html` + `features`(「开发桥」保活指令);重启后 dev_* 无响应时打开一次「开发桥」拉起 preload。
 
+2026-09-20 热修(0.3.2):8.0 开发者工具报 tools description 超 500 字符拒装(v3.2 扩写 dev_call 至 528)。已压至 413;**经验:工具 description ≤500 硬上限,selftest 已加合规断言——改 plugin.json 后先跑 selftest 再上真机**。已实证的 8.0 校验器约束:features 必填、工具 description 非空且 ≤500、inputSchema 禁 oneOf 等组合构造。
+
 2026-09-18:建 git 仓库并公开(github.com/lililixxx1/utools-dev-bridge),初始提交收录全部 20 文件;文档同步公开口径。

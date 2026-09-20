@@ -151,6 +151,13 @@ const assert = (cond, msg) => { if (!cond) { console.error("FAIL:", msg); proces
 const tools = registered;
 assert(Object.keys(tools).length === 6, "注册了 6 个工具: " + Object.keys(tools).join(","));
 
+// 8.0 开发者工具校验契约:tools.<名>.description 非空且 ≤500 字符(dev_call 曾 528 字符被拒装)
+const pj = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "plugin.json"), "utf8"));
+for (const [k, v] of Object.entries(pj.tools)) {
+  assert(typeof v.description === "string" && v.description.length > 0 && v.description.length <= 500,
+    "plugin.json tools." + k + ".description 合规(≤500 字符,当前 " + (v.description ? v.description.length : 0) + ")");
+}
+
 (async () => {
   // 1) dev_load
   let r = await tools.dev_load({ path: fx });
