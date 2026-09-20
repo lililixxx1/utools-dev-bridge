@@ -35,10 +35,11 @@ let nextId = 1, SID = null;
 async function rpc(method, params) {
   const headers = SID ? { ...H, "Mcp-Session-Id": SID } : H;
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }) });
+  if (!res.ok) throw new Error(method + " HTTP " + res.status + (res.status === 403 ? ",网关 key 轮换(去 uTools 重复制到 config.json)" : ""));
   const sid = res.headers.get("mcp-session-id"); if (sid) SID = sid;
   const text = await res.text();
   let body = null;
-  if (/^event:|data:/.test(text)) {
+  if (/^(event:|data:)/m.test(text)) {
     const lines = text.split(/\r?\n/).filter((l) => l.startsWith("data:"));
     for (let i = lines.length - 1; i >= 0; i--) {
       try { const o = JSON.parse(lines[i].slice(5).trim()); if (o && (o.result !== undefined || o.error !== undefined)) { body = o; break; } } catch (_) {}
@@ -50,6 +51,7 @@ async function rpc(method, params) {
 }
 async function call(tool, args) {
   const r = await rpc("tools/call", { name: PREFIX + tool, arguments: args });
+  if (r.isError) throw new Error(tool + " isError: " + JSON.stringify(r.content || r).slice(0, 300));
   const sc = r.structuredContent || {};
   if (sc.ok === false) throw new Error(tool + " ok:false " + JSON.stringify(sc).slice(0, 500));
   return sc;
@@ -78,11 +80,12 @@ const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + labe
   const load = await call("dev_load", { path: RT });
   ok(load.ok === true, "dev_load rt-check(exports=" + (load.exports || []).length + ",tools=[" + ((load.tools || []).map((t) => t.name)).join(",") + "])");
 
-  // 4) runAll:全部用例断言全绿(含 v80.events / v80.registerTool)
+  // 4) runAll:全部用例断言全绿(total 阈值防用例被静默删减;含 v80.events / v80.registerTool)
   const ra = await call("dev_call", { name: "rt.runAll", args: [] });
-  const results = (ra.result && ra.result.results) || [];
+  const rr = (ra.result || {});
+  const results = rr.results || [];
   const bad = results.filter((r) => !r.pass);
-  ok(ra.result && ra.result.fail === 0, "runAll " + ra.result.total + " 例全绿(fail=" + ra.result.fail + ")");
+  ok(rr.fail === 0 && rr.total >= 22, "runAll " + rr.total + " 例全绿(fail=" + rr.fail + ")");
   for (const r of bad) console.log("  FAIL-Detail " + r.name + ": " + r.detail);
   const v80e = results.find((r) => r.name === "v80.events");
   const v80r = results.find((r) => r.name === "v80.registerTool");
@@ -106,14 +109,14 @@ const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + labe
   const tp = await call("dev_call", { name: "__tool:rt8_probe", args: [{ x: 42 }] });
   ok(tp.result && tp.result.got === 42, "__tool:rt8_probe({x:42}) → {got:" + (tp.result && tp.result.got) + "}");
 
-  // 8) 还原:回放写日志,随后核对终态为空
+  // 8) 还原:断言零失败(失败条目保留重试时不增计数,单看 ok/计数无鉴别力),再以 dev_list 直证终态为空
   const cu = await call("dev_cleanup", {});
   const rc2 = (cu.restored || {});
-  ok(cu.ok === true, "dev_cleanup 还原(dbRestore=" + rc2.dbRestore + ",dbDelete=" + rc2.dbDelete + ",kvRestore=" + rc2.kvRestore + ",kvDelete=" + rc2.kvDelete + ")");
-  const fin = await call("dev_cleanup", {});
-  const fr = (fin.restored || {});
-  ok((fr.dbRestore + fr.dbDelete + fr.kvRestore + fr.kvDelete) === 0, "写日志终态为空");
+  ok(cu.ok === true && (cu.failures || []).length === 0,
+    "dev_cleanup 还原零失败(dbRestore=" + rc2.dbRestore + ",dbDelete=" + rc2.dbDelete + ",kvRestore=" + rc2.kvRestore + ",kvDelete=" + rc2.kvDelete + ")");
+  const fin = await call("dev_list", {});
+  ok(fin.pendingRestore === undefined && fin.untrackedJournal === undefined,
+    "写日志终态为空(dev_list 无 pendingRestore / untrackedJournal)");
 
   console.log("== RT-RUN " + (process.exitCode ? "FAILED" : "ALL PASS") + " ==");
-  process.exit(process.exitCode || 0);
 })().catch((e) => { console.error("ABORT: " + (e && e.message ? e.message : String(e))); process.exit(1); });

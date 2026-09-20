@@ -10,7 +10,8 @@ const os = require("os");
 const path = require("path");
 
 // 网关侧工具名带插件前缀:8.0 为 utools_plugin_dev_zii2hjtj_<名>(下划线),旧版为 utools.dev_zii2hjtj.<名>(点)。
-// 裸名经 tools/list 动态探测前缀(两种命名都兼容);带分隔符的完整名按原样使用。
+// 全名/裸名统一经 tools/list 解析:精确匹配优先(8.0 下划线全名不含点,includes(".") 判不了全名),
+// 裸名再按"本插件前缀 + 裸名"补全,两种命名都兼容。
 const tool = process.argv[2];
 if (!tool) {
   console.error("usage: node gw-call.js <toolName> [jsonArgs]");
@@ -65,7 +66,7 @@ async function rpc(method, params, sessionId) {
   const text = await res.text();
   let body = null;
   const ct = res.headers.get("content-type") || "";
-  if (ct.includes("text/event-stream") || /^event:|data:/.test(text)) {
+  if (ct.includes("text/event-stream") || /^(event:|data:)/m.test(text)) {
     // SSE:从后向前找第一条能解析且带 result/error 的 data 行(尾部 ping/通知/分段 data 不误取)
     const lines = text.split(/\r?\n/).filter((l) => l.startsWith("data:"));
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -94,17 +95,18 @@ async function rpc(method, params, sessionId) {
     headers: { ...baseHeaders, "Mcp-Session-Id": sid },
     body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
   }).catch(() => {});
-  // 裸名 → 经 tools/list 探测本插件前缀(8.0 改了命名规范,不能写死)
-  let fullTool = tool;
-  if (!tool.includes(".")) {
+  // 工具全名解析:tools/list 精确匹配(全名直传)→ 裸名按本插件前缀补全 → 都未命中才报错(回显被查名)
+  let fullTool = null;
+  {
     const tl = await rpc("tools/list", {}, sid);
     const all = ((tl.body && tl.body.result && tl.body.result.tools) || []).map((t) => String(t.name));
-    const cand = all.find((n) => n.includes("dev_zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)));
-    if (!cand) {
-      console.error("tool not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded?");
+    fullTool = all.find((n) => n === tool)
+      || all.find((n) => n.includes("dev_zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)))
+      || null;
+    if (!fullTool) {
+      console.error("tool '" + tool + "' not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded? name spelled right?");
       process.exit(1);
     }
-    fullTool = cand;
   }
   const out = await rpc("tools/call", { name: fullTool, arguments: args }, sid);
   if (!out.body || out.body.result === undefined) {

@@ -26,7 +26,7 @@ async function rpc(method, params) {
   const sid = res.headers.get("mcp-session-id"); if (sid) SID = sid;
   const text = await res.text();
   let body = null;
-  if (/^event:|data:/.test(text)) {
+  if (/^(event:|data:)/m.test(text)) {
     const lines = text.split(/\r?\n/).filter((l) => l.startsWith("data:"));
     for (let i = lines.length - 1; i >= 0; i--) {
       try { const o = JSON.parse(lines[i].slice(5).trim()); if (o && (o.result !== undefined || o.error !== undefined)) { body = o; break; } } catch (_) {}
