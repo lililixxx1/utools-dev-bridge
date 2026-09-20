@@ -51,7 +51,7 @@ dev_load {path: "<目标插件根目录>"}          # 或 mode:"file" + 单 js �
 dev_call {name: "airss.db.getFeeds", args: []}
   → {ok, result, consoleFrom/callsFrom 游标}
 dev_console {since: <游标>}                  # 增量取 console/异常(含 level:"uncaught" 异步异常)
-dev_calls_log {since: <游标>}                # 增量取调用流水(utools.*/fs.*/require:* 拦截;含 stubbed/denied/untracked 标记)
+dev_calls_log {since: <游标>}                # 增量取调用流水(utools.*/fs.*/require:* 拦截,含 tool.progress:<名>;含 stubbed/denied/untracked 标记)
 改代码 → 再 dev_load(热重载,services 级生效)→ dev_call ……
 dev_cleanup                                 # 测完还原 db/dbStorage/dbCryptoStorage/fs 写副作用
 ```
@@ -66,7 +66,7 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 
 **定位口径:门控是"防意外"的卫生措施,不是安全边界。** vm 沙箱注入了宿主对象(Buffer/timers 等),蓄意代码可经 `Buffer.constructor("return process")()` 逃逸——永远堵不完,也不试图堵。dev_* 等价于**本机任意代码执行 + 任意路径读取**;3501 仅绑回环,x-mcp-key 即边界,key 不入任何仓库/笔记。
 
-- **破坏性 utools API 默认 stub**(剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/outPlugin/定时任务创建删除等),调用流水里标 `stubbed:true`;确需真执行才 `dev_load {allowSideEffects:true}`
+- **破坏性 utools API 默认 stub**(剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/outPlugin/定时任务创建删除等),调用流水里标 `stubbed:true`;确需真执行才 `dev_load {allowSideEffects:true}`。stub 返回同步对象 `{stubbed:true,...}`——例外:`requestSchedule`(官方签名 Promise<void>)的 stub 保 thenable,目标 `.then()/await` 不炸
 - **Node 内置模块白名单门控**(`node:` 前缀已规范化,防绕过):
   | 类别 | 模块 | 行为 |
   |---|---|---|

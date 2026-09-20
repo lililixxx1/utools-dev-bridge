@@ -114,6 +114,16 @@ const checks = {
     if (document.querySelectorAll(".a").length !== 0) throw new Error("querySelectorAll 应恒空");
     return "ok";
   },
+  // 8.0 适配:生命周期登记不挂宿主、registerTool 捕获
+  "v80.events": () => {
+    utools.onPluginReady(() => {});
+    utools.onScheduleTrigger(() => {});
+    return "registered"; // 被桥捕获即过;外部可经 __ready/__schedule 触发
+  },
+  "v80.registerTool": () => {
+    utools.registerTool("rt8_probe", (p) => ({ got: p && p.x }));
+    return "registered"; // 捕获与否由外部 dev_list 的 tools 清单与 __tool:rt8_probe 验证
+  },
 };
 
 window.rt = {
@@ -179,6 +189,15 @@ window.rt = {
   },
   timerCheck() {
     return new Promise((resolve) => setTimeout(() => resolve("timer-fired"), 30));
+  },
+  // 8.0 requestSchedule stub 形态:官方签名 Promise<void>,stub 须保 thenable 且 resolve 值带 stubbed(异步,不进 runAll 同步套件)
+  v80ScheduleStub() {
+    return utools.requestSchedule({ code: "rt8", label: "rt-check", trigger: 60000 }).then((out) => {
+      if (!out || out.stubbed !== true) throw new Error("requestSchedule resolve 值未带 stubbed: " + String(out).slice(0, 80));
+      const del = utools.removeSchedule("rt8");
+      if (!del || del.stubbed !== true) throw new Error("removeSchedule 未 stub");
+      return "stubbed+thenable";
+    });
   },
   // 鉴别异步失败根因:微任务链 vs 定时器 vs 宿主直通定时器
   quickAsync() {

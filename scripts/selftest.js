@@ -87,6 +87,7 @@ fs.writeFileSync(
     'utools.onPluginReady(() => { console.log("ready-cb"); });', // 8.0
     'utools.onScheduleTrigger(({ code }) => { console.log("schedule-cb", code); });', // 8.0
     'utools.registerTool("say_hi", (params, ctx) => ({ echo: params && params.text, hasCtx: !!ctx }));', // 8.0 MCP 工具
+    'utools.registerTool("bad_handler", 12345);', // 审核 M3:非函数 handler 不入账
     'window.demo = {',
     '  add: math.add,',
     '  withTax: math.withTax,',
@@ -100,6 +101,7 @@ fs.writeFileSync(
     '  arm: (ms) => { setTimeout(() => { ut().db.put({ _id: "_dev_:late", n: 1 }); }, ms); return "armed"; },',
     '  echoClipboard: (t) => ut().copyText(t),',
     '  armSchedule: () => utools.requestSchedule({ code: "t1", label: "桥测", trigger: 60000 }),', // 8.0
+    '  armScheduleThen: () => typeof utools.requestSchedule({ code: "t2", label: "桥测", trigger: 1 }).then === "function",', // 审核 M1:stub 保 thenable
     '  dropSchedule: () => utools.removeSchedule("t1"),', // 8.0
     '  boom: () => { throw new Error("炸了:boom-test"); },',
     '  slow: () => new Promise((r) => setTimeout(() => r("slow-done"), 100)),',
@@ -354,6 +356,8 @@ assert(Object.keys(tools).length === 6, "注册了 6 个工具: " + Object.keys(
   assert(r.ok && r.result && /^selftest/.test(r.result.nativeIdPrefix), "rt-check probeHost 工作");
   r = await tools.dev_call({ name: "rt.timerCheck", timeoutMs: 5000 });
   assert(r.ok && r.result === "timer-fired", "rt-check timerCheck 异步触发");
+  r = await tools.dev_call({ name: "rt.v80ScheduleStub", timeoutMs: 5000 });
+  assert(r.ok && r.result === "stubbed+thenable", "rt-check v80ScheduleStub:8.0 定时任务 stub 保 thenable");
   r = await tools.dev_call({ name: "rt.phaseA" });
   const mk = r.result.marker;
   r = await tools.dev_call({ name: "rt.phaseB", args: [mk] });
@@ -445,6 +449,16 @@ assert(Object.keys(tools).length === 6, "注册了 6 个工具: " + Object.keys(
   assert(r.ok && r.result && r.result.stubbed === true && global.__schedRemoved === 0, "removeSchedule 默认 stub");
   r = await tools.dev_list();
   assert(r.ok && r.tools.some((t) => t.name === "say_hi"), "dev_list 返回工具清单");
+
+  // 19b) 审核 M1-M3 回归:stub 保 thenable / null 原型防 __proto__/constructor / 非函数 handler 装载期暴露
+  assert(r.warnings.some((w) => /bad_handler/.test(w)), "非函数 handler 装载期警告(M3)");
+  assert(!r.tools.some((t) => t.name === "bad_handler"), "非函数 handler 不入 tools 清单(M3)");
+  r = await tools.dev_call({ name: "demo.armScheduleThen" });
+  assert(r.ok && r.result === true, "requestSchedule stub 保 thenable(.then 可用)(M1)");
+  r = await tools.dev_call({ name: "__tool:__proto__" });
+  assert(!r.ok && r.code === "UNKNOWN_EXPORT", "__tool:__proto__ 不命中原型链(M2)");
+  r = await tools.dev_call({ name: "__tool:constructor" });
+  assert(!r.ok && r.code === "UNKNOWN_EXPORT", "__tool:constructor 不命中原型链(M2)");
 
   console.log(process.exitCode ? "\n== SELFTEST FAILED ==" : "\n== SELFTEST ALL PASS ==");
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exitCode = 1; });

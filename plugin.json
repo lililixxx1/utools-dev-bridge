@@ -52,7 +52,7 @@
       }
     },
     "dev_calls_log": {
-      "description": "读取被测代码的调用流水(深代理逐叶子记录 utools 调用含 db.promises.*,另含 fs.* 写操作与 require:<模块>.<属性> 拦截)。条目含 api/参数摘要/结果或异常/stubbed/denied/untracked 标记。since 增量语义同 dev_console。",
+        "description": "读取被测代码的调用流水(深代理逐叶子记录 utools 调用含 db.promises.*,另含 fs.* 写操作、require:<模块>.<属性> 拦截与 tool.progress:<工具名>(__tool: 调用内 sendProgress 上报))。条目含 api/参数摘要/结果或异常/stubbed/denied/untracked 标记。since 增量语义同 dev_console。",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

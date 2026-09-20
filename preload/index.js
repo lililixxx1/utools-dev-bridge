@@ -62,6 +62,9 @@ const STUBBED_APIS = new Set([
   "utools.requestSchedule", "utools.removeSchedule",
 ]);
 
+// 官方签名为 Promise 的 stub API:拦截时保 thenable,目标 .then()/await 不炸(其余 stub 家族维持同步对象口径)
+const PROMISE_STUB_APIS = new Set(["utools.requestSchedule"]);
+
 // 生命周期事件:登记回调而非真注册(供 __enter 等特殊名触发);8.0 增 onPluginReady/onScheduleTrigger
 const EVENT_APIS = new Set([
   "utools.onPluginEnter", "utools.onPluginOut", "utools.onMainPush",
@@ -315,16 +318,18 @@ function makeLeaf(origFn, api, gen, allowSE) {
       return undefined;
     }
     if (api === "utools.registerTool") {
-      // 8.0:目标声明的 MCP 工具处理器捕获进本代际(经 __tool:<name> 可调),不注册到宿主
+      // 8.0:目标声明的 MCP 工具处理器捕获进本代际(经 __tool:<name> 可调),不注册到宿主;
+      // handler 非函数不入账,装载期 warning 暴露(审核 M3)
       const nm = args && args[0];
-      if (typeof nm === "string" && args[1] != null) gen.tools[nm] = args[1];
+      if (typeof nm === "string" && typeof args[1] === "function") gen.tools[nm] = args[1];
+      else if (typeof nm === "string") gen.warnings.push("registerTool('" + nm + "') handler 非函数,已忽略(不可经 __tool: 调用)");
       recordCall(api, [nm], undefined, null, true);
       return undefined;
     }
     if (STUBBED_APIS.has(api) && !allowSE) {
       const out = { stubbed: true, api, note: "破坏性 API 已被 dev-bridge 拦截;dev_load 传 allowSideEffects:true 放行" };
       recordCall(api, args, out, null, true);
-      return out;
+      return PROMISE_STUB_APIS.has(api) ? Promise.resolve(out) : out;
     }
     const pre = isJournaledApi(api) ? capturePre(api, args) : null;
     let res;
@@ -981,7 +986,7 @@ function buildGeneration(cfg) {
     allowAllModules: cfg.allowHostModules === true, // B1 修复:数组(含[])不得解除 fetch 门控与 fs 超限拒绝
     loadedAt: new Date().toISOString(),
     timeoutMs: cfg.timeoutMs || LOAD_TIMEOUT_DEFAULT,
-    ctx: null, manifest: [], events: {}, tools: {}, warnings: [], timers: new Set(), dirty: false,
+    ctx: null, manifest: [], events: {}, tools: Object.create(null), warnings: [], timers: new Set(), dirty: false, // tools 用 null 原型:防 __tool:__proto__/constructor 命中原型链(审核 M2)
     retired: false,
     proxyCache: new WeakMap(),
     domEvents: {},

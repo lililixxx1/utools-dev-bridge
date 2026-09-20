@@ -45,6 +45,6 @@ git push                        # 改动直接提交 main 并推送;提交信息
 
 v3.1 闭环:airss 全功能实测完毕,孤儿文档缺陷已修(bulkDocs 无前态回滚删除,selftest 5c 复刻),终态已清零。新增能力:生命周期特殊名(`__enter/__out/__detach/__mainPush/__dbPull/__domReady`)、DOM 极简 stub(选择器恒 null)、fs 写日志 WAL(前态先落盘,8MB/500 文件/64MB 上限)。
 
-2026-09-20 v3.2(uTools 8.0 公测适配,plugin.json 0.3.0):新生命周期 `__ready`/`__schedule` 入 EVENT_APIS(不拦截会真挂宿主);目标 `registerTool` 捕获进 gen.tools,`dev_call __tool:<名>` 按 MCP ToolContext 仿真调用(dev_load/dev_list 返回 tools 清单);`requestSchedule`/`removeSchedule` 入 stub(getSchedules 只读透传)。8.0 运行时 Electron 34/Node 20;`tools` 字段与内置 MCP 服务已正式化,桥底座机制不变;真机升级 beta 后需重载插件,若 tools/list 无 dev_* 走 README 冷启动回退。
+2026-09-20 v3.2(uTools 8.0 公测适配,plugin.json 0.3.0):新生命周期 `__ready`/`__schedule` 入 EVENT_APIS(不拦截会真挂宿主);目标 `registerTool` 捕获进 gen.tools(null 原型),`dev_call __tool:<名>` 按 MCP ToolContext 仿真调用(dev_load/dev_list 返回 tools 清单);`requestSchedule`/`removeSchedule` 入 stub(requestSchedule stub 保 thenable,getSchedules 只读透传)。plan-code-reviewer 审核:可合入(无 Blocker/Major),4 Minor 已修(thenable/null 原型/非函数 handler 警告/tool.progress 文档),selftest 114 断言全绿,rt-check 增 3 个 v80 真机用例待下次实机回归。8.0 运行时 Electron 34/Node 20;`tools` 字段与内置 MCP 服务已正式化,桥底座机制不变;真机升级 beta 后需重载插件,若 tools/list 无 dev_* 走 README 冷启动回退。
 
 2026-09-18:建 git 仓库并公开(github.com/lililixxx1/utools-dev-bridge),初始提交收录全部 20 文件;文档同步公开口径。
