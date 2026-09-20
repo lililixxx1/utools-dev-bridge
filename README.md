@@ -2,6 +2,8 @@
 
 让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。
 
+> uTools 8.0 公测适配版(v0.3.0):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。
+
 > 仓库:https://github.com/lililixxx1/utools-dev-bridge
 
 ## 目录结构
@@ -53,7 +55,8 @@ dev_calls_log {since: <游标>}                # 增量取调用流水(utools.*/
 改代码 → 再 dev_load(热重载,services 级生效)→ dev_call ……
 dev_cleanup                                 # 测完还原 db/dbStorage/dbCryptoStorage/fs 写副作用
 ```
-- `dev_call {name:"__enter", args:[{code,type,payload}]}` 触发目标注册的 onPluginEnter;同类特殊名:`__out`/`__detach`(onPluginOut/Detach)、`__mainPush`(args=[{code,type,payload}])、`__dbPull`(args=[{docs}])、`__domReady`(触发 document 的 DOMContentLoaded 监听)
+- `dev_call {name:"__enter", args:[{code,type,payload,from}]}` 触发目标注册的 onPluginEnter;同类特殊名:`__out`/`__detach`(onPluginOut/Detach)、`__mainPush`(args=[{code,type,payload}])、`__dbPull`(args=[{docs}])、`__domReady`(触发 document 的 DOMContentLoaded 监听);8.0 新增:`__ready`(onPluginReady,args=[])、`__schedule`(onScheduleTrigger,args=[{code}])
+- 8.0 MCP 工具测试:目标 preload 里 `utools.registerTool(name, handler)` 注册的处理器会被捕获(dev_load/dev_list 返回 tools 清单),`dev_call {name:"__tool:<名>", args:[参数对象]}` 直接调用——自动补仿真 ToolContext(sendProgress 录入流水),不必真开 MCP 会话即可驱动目标的工具逻辑
 - DOM:沙箱有极简 document stub——getElementById/querySelector **恒 null**、createElement/addEventListener 惰性记录;"顶层仅注册回调"的插件可装载,回调内做真实 DOM 的仍不承载
 - 长任务(AI/网络)`timeoutMs` 按需调大(默认 30s)
 - 交叉验证:`__enter` 之后 `dev_calls_log` 看目标都调了哪些 utools API
@@ -63,7 +66,7 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 
 **定位口径:门控是"防意外"的卫生措施,不是安全边界。** vm 沙箱注入了宿主对象(Buffer/timers 等),蓄意代码可经 `Buffer.constructor("return process")()` 逃逸——永远堵不完,也不试图堵。dev_* 等价于**本机任意代码执行 + 任意路径读取**;3501 仅绑回环,x-mcp-key 即边界,key 不入任何仓库/笔记。
 
-- **破坏性 utools API 默认 stub**(剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/outPlugin 等),调用流水里标 `stubbed:true`;确需真执行才 `dev_load {allowSideEffects:true}`
+- **破坏性 utools API 默认 stub**(剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/outPlugin/定时任务创建删除等),调用流水里标 `stubbed:true`;确需真执行才 `dev_load {allowSideEffects:true}`
 - **Node 内置模块白名单门控**(`node:` 前缀已规范化,防绕过):
   | 类别 | 模块 | 行为 |
   |---|---|---|

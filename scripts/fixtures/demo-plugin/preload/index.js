@@ -11,6 +11,9 @@ const fsp = require("fs/promises");
 utools.onPluginEnter(({ code, type, payload }) => { console.log("enter", code, type, payload); });
 utools.onPluginOut(() => { console.log("out-cb"); });
 utools.onMainPush(({ code }) => { console.log("push-cb", code); });
+utools.onPluginReady(() => { console.log("ready-cb"); });
+utools.onScheduleTrigger(({ code }) => { console.log("schedule-cb", code); });
+utools.registerTool("say_hi", (params, ctx) => ({ echo: params && params.text, hasCtx: !!ctx }));
 window.demo = {
   add: math.add,
   withTax: math.withTax,
@@ -23,6 +26,8 @@ window.demo = {
   bulkCreate: (ids) => ut().db.bulkDocs(ids.map((id) => ({ _id: id, src: "bulk" }))),
   arm: (ms) => { setTimeout(() => { ut().db.put({ _id: "_dev_:late", n: 1 }); }, ms); return "armed"; },
   echoClipboard: (t) => ut().copyText(t),
+  armSchedule: () => utools.requestSchedule({ code: "t1", label: "桥测", trigger: 60000 }),
+  dropSchedule: () => utools.removeSchedule("t1"),
   boom: () => { throw new Error("炸了:boom-test"); },
   slow: () => new Promise((r) => setTimeout(() => r("slow-done"), 100)),
   spawnEcho: () => cp.exec("echo hi"),

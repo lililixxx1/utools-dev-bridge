@@ -1,7 +1,7 @@
 {
   "logo": "logo.png",
   "preload": "preload/index.js",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "devbridge",
   "pluginName": "开发桥 dev-bridge",
   "description": "面向 AI Agent 的 uTools 插件开发测试桥:沙箱加载目标插件 preload,支持调用/日志/调用流水/副作用还原",
@@ -9,7 +9,7 @@
   "platform": ["win32", "darwin", "linux"],
   "tools": {
     "dev_load": {
-      "description": "加载或热重载一个待测 uTools 插件:读取其 plugin.json 定位 preload 并在隔离 vm 沙箱执行(mode=plugin),或直接执行任意 JS 文件(mode=file)。每次调用重建沙箱=热重载生效(services 子模块级)。返回可调用清单(名字/参数个数/源码预览)、注册的生命周期回调、警告(含装载期模块拦截汇总)。副作用类 utools API 默认 stub(allowSideEffects=true 放行);Node 内置模块白名单门控:fs 写副作用走写日志可还原,child_process/http/electron 等默认懒拒绝(allowHostModules 放行)。",
+        "description": "加载或热重载一个待测 uTools 插件:读取其 plugin.json 定位 preload 并在隔离 vm 沙箱执行(mode=plugin),或直接执行任意 JS 文件(mode=file)。每次调用重建沙箱=热重载生效(services 子模块级)。返回可调用清单(名字/参数个数/源码预览)、注册的生命周期回调(onPluginEnter/Out/Detach/MainPush/DbPull/Ready/ScheduleTrigger)、目标 registerTool 注册的工具(经 __tool:<name> 可调)、警告(含装载期模块拦截汇总)。副作用类 utools API 默认 stub(allowSideEffects=true 放行;含 8.0 requestSchedule/removeSchedule);Node 内置模块白名单门控:fs 写副作用走写日志可还原,child_process/http/electron 等默认懒拒绝(allowHostModules 放行)。",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -24,7 +24,7 @@
       }
     },
     "dev_call": {
-      "description": "调用已加载插件的导出函数。name 为清单中的路径(如 airss.db.getFeeds);特殊名:__enter 触发 onPluginEnter(args=[{code,type,payload}]),__out/__detach 触发 onPluginOut/onPluginDetach,__mainPush 触发 onMainPush,__dbPull 触发 onDbPull(args=[{docs}]),__domReady 触发 document 的 DOMContentLoaded 监听。返回 {ok,result|error,durationMs,consoleFrom,callsFrom} 及期间新增日志游标。同步死循环受 timeoutMs 保护,超时后沙箱自动重建。",
+        "description": "调用已加载插件的导出函数。name 为清单中的路径(如 airss.db.getFeeds);特殊名:__enter 触发 onPluginEnter(args=[{code,type,payload,from}]),__out/__detach 触发 onPluginOut/onPluginDetach,__mainPush 触发 onMainPush,__dbPull 触发 onDbPull(args=[{docs}]),__ready 触发 onPluginReady,__schedule 触发 onScheduleTrigger(args=[{code}]),__domReady 触发 document 的 DOMContentLoaded 监听;__tool:<name> 调用目标 registerTool 注册的 MCP 工具处理器(args=[params],自动补 ToolContext 仿真 ctx,sendProgress 录入流水)。返回 {ok,result|error,durationMs,consoleFrom,callsFrom} 及期间新增日志游标。同步死循环受 timeoutMs 保护,超时后沙箱自动重建。",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -37,7 +37,7 @@
       }
     },
     "dev_list": {
-      "description": "列出当前已加载目标的状态(路径/模式/加载时间/是否自动重建)与全部可调用导出清单,不重载。",
+        "description": "列出当前已加载目标的状态(路径/模式/加载时间/是否自动重建)、全部可调用导出清单、注册的生命周期回调与 registerTool 工具,不重载。",
       "inputSchema": { "type": "object", "additionalProperties": false, "properties": {} }
     },
     "dev_console": {

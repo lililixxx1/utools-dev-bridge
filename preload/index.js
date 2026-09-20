@@ -2,6 +2,8 @@
  * dev-bridge — uTools 插件开发测试桥(纯 AI 插件,无 UI)
  *
  * 机制:plugin.json tools 声明 + 顶层 registerTool,经 uTools MCP 网关暴露给 agent。
+ * 8.0 适配:运行时 Electron 34/Node 20;新增生命周期 onPluginReady/onScheduleTrigger 登记,
+ *       目标 registerTool 捕获为 __tool:<name> 可调(不注册到宿主),requestSchedule/removeSchedule 入 stub。
  * 核心:自实现 CJS loader(目标模块逐个 vm 编译并【在 vm 内】执行,缓存仅存活于当前
  *       沙箱代际,宿主 require.cache 零污染 → services 级热重载真实生效);
  *      深代理逐叶子录制 utools 调用(含 db.promises.* / ubrowser 链);
@@ -56,21 +58,27 @@ const STUBBED_APIS = new Set([
   "utools.ai", "utools.setUBrowserProxy", "utools.clearUBrowserCache",
   "utools.redirectHotKeySetting", "utools.redirectAiModelsSetting",
   "utools.hideMainWindow", "utools.showMainWindow",
+  // 8.0 定时任务:创建须用户确认、删除动真任务,默认 stub(getSchedules 只读不拦)
+  "utools.requestSchedule", "utools.removeSchedule",
 ]);
 
-// 生命周期事件:登记回调而非真注册(供 __enter 等特殊名触发)
+// 生命周期事件:登记回调而非真注册(供 __enter 等特殊名触发);8.0 增 onPluginReady/onScheduleTrigger
 const EVENT_APIS = new Set([
   "utools.onPluginEnter", "utools.onPluginOut", "utools.onMainPush",
   "utools.onPluginDetach", "utools.onDbPull",
+  "utools.onPluginReady", "utools.onScheduleTrigger",
 ]);
 
-// dev_call 特殊名 → 生命周期回调表(P2);__domReady 触发 document DOMContentLoaded 监听
+// dev_call 特殊名 → 生命周期回调表(P2);__domReady 触发 document DOMContentLoaded 监听;
+// __tool:<name>(8.0)调目标 registerTool 注册的处理器,单独在 devCall 分派
 const LIFECYCLE_SPECIALS = {
   __enter: "utools.onPluginEnter",
   __out: "utools.onPluginOut",
   __detach: "utools.onPluginDetach",
   __dbPull: "utools.onDbPull",
   __mainPush: "utools.onMainPush",
+  __ready: "utools.onPluginReady",        // 8.0:加载完成(args=[])
+  __schedule: "utools.onScheduleTrigger", // 8.0:定时任务触发(args=[{code}])
   __domReady: "__dom",
 };
 
@@ -306,7 +314,13 @@ function makeLeaf(origFn, api, gen, allowSE) {
       recordCall(api, args, undefined, null, true);
       return undefined;
     }
-    if (api === "utools.registerTool") { recordCall(api, args, undefined, null, true); return undefined; }
+    if (api === "utools.registerTool") {
+      // 8.0:目标声明的 MCP 工具处理器捕获进本代际(经 __tool:<name> 可调),不注册到宿主
+      const nm = args && args[0];
+      if (typeof nm === "string" && args[1] != null) gen.tools[nm] = args[1];
+      recordCall(api, [nm], undefined, null, true);
+      return undefined;
+    }
     if (STUBBED_APIS.has(api) && !allowSE) {
       const out = { stubbed: true, api, note: "破坏性 API 已被 dev-bridge 拦截;dev_load 传 allowSideEffects:true 放行" };
       recordCall(api, args, out, null, true);
@@ -967,7 +981,7 @@ function buildGeneration(cfg) {
     allowAllModules: cfg.allowHostModules === true, // B1 修复:数组(含[])不得解除 fetch 门控与 fs 超限拒绝
     loadedAt: new Date().toISOString(),
     timeoutMs: cfg.timeoutMs || LOAD_TIMEOUT_DEFAULT,
-    ctx: null, manifest: [], events: {}, warnings: [], timers: new Set(), dirty: false,
+    ctx: null, manifest: [], events: {}, tools: {}, warnings: [], timers: new Set(), dirty: false,
     retired: false,
     proxyCache: new WeakMap(),
     domEvents: {},
@@ -1195,6 +1209,11 @@ function ensureState(meta) {
 }
 
 // ---------- 工具实现 ----------
+// 目标经 registerTool 注册的工具清单(8.0):__tool:<name> 可调
+function toolsList(gen) {
+  return Object.keys(gen.tools).map((n) => ({ name: n, args: typeof gen.tools[n].length === "number" ? gen.tools[n].length : 0 }));
+}
+
 function devLoad(cfg) {
   const callsBefore = callsSeq;
   const gen = buildGeneration(cfg); // 成功才切换(G8)
@@ -1214,13 +1233,17 @@ function devLoad(cfg) {
   return {
     ok: true, entry: gen.entry, mode: gen.mode, allowSideEffects: gen.allowSideEffects,
     allowHostModules: gen.allowHostModules === undefined ? false : gen.allowHostModules,
-    loadedAt: gen.loadedAt, exports: gen.manifest, events: gen.eventsList, warnings: gen.warnings,
-    hint: "用 dev_call 执行清单中的导出;name=__enter 且 args=[{code,type,payload}] 可触发 onPluginEnter",
+    loadedAt: gen.loadedAt, exports: gen.manifest, events: gen.eventsList, tools: toolsList(gen), warnings: gen.warnings,
+    hint: "用 dev_call 执行清单中的导出;name=__enter 且 args=[{code,type,payload}] 可触发 onPluginEnter;目标 registerTool 的工具用 __tool:<name> 调用",
   };
 }
 
 function lookupExport(gen, name) {
   if (LIFECYCLE_SPECIALS[name]) return { special: name };
+  if (name.indexOf("__tool:") === 0) {
+    const tn = name.slice("__tool:".length);
+    return gen.tools[tn] ? { tool: tn } : null;
+  }
   const parts = name.split(".");
   let val = gen.ctx;
   for (let i = 0; i < parts.length; i++) {
@@ -1261,14 +1284,20 @@ async function devCall(cfg) {
   const timeoutMs = cfg.timeoutMs || CALL_TIMEOUT_DEFAULT;
   const found = lookupExport(gen, cfg.name);
   if (!found) {
+    if (cfg.name.indexOf("__tool:") === 0) {
+      const names = Object.keys(gen.tools);
+      throw err("UNKNOWN_EXPORT", "目标未注册工具 '" + cfg.name.slice(7) + "'"
+        + (names.length ? ";已注册: " + names.join(", ") : "(未见 utools.registerTool 调用)"));
+    }
     const cands = gen.manifest.filter((m) => m.kind === "function").map((m) => m.name).slice(0, 40);
     throw err("UNKNOWN_EXPORT", "未找到导出 '" + cfg.name + "';函数候选: " + cands.join(", "));
   }
   const isDom = found.special === "__domReady";
   const specialApi = found.special ? LIFECYCLE_SPECIALS[found.special] : null;
-  const targets = found.special
-    ? (isDom ? (gen.domEvents.DOMContentLoaded || []) : (gen.events[specialApi] || []))
-    : [found.value];
+  const targets = found.tool ? [gen.tools[found.tool]]
+    : found.special
+      ? (isDom ? (gen.domEvents.DOMContentLoaded || []) : (gen.events[specialApi] || []))
+      : [found.value];
   if (found.special && !targets.length) {
     throw err("UNKNOWN_EXPORT", isDom
       ? "目标未监听 document 的 DOMContentLoaded(查询类 stub 恒 null,见 README)"
@@ -1283,10 +1312,17 @@ async function devCall(cfg) {
   try { hostTimers.setTimeout(() => recordCall("probe.nodeTimer", [], undefined, null, false, false, false), 50); } catch (_) {}
   const consoleFrom = consoleSeq;
   const callsFrom = callsSeq;
+  // 8.0 __tool:按 MCP ToolContext 形态补 ctx(sendProgress 录入流水),handler 签名 (params, ctx)
+  const callArgs = found.tool
+    ? [(cfg.args || [])[0], {
+        requestId: "dev_call",
+        sendProgress: async (o) => { recordCall("tool.progress:" + found.tool, [o], undefined, null, true); },
+      }]
+    : (cfg.args || []);
   let raw;
   let lastErr = null;
   for (const fn of targets) {
-    try { raw = runSyncInCtx(gen, fn, cfg.args || [], timeoutMs); }
+    try { raw = runSyncInCtx(gen, fn, callArgs, timeoutMs); }
     catch (e) { lastErr = e; break; }
   }
   if (lastErr) {
@@ -1338,7 +1374,7 @@ function devList() {
   return {
     ok: true, loaded: true, entry: g.entry, mode: g.mode, allowSideEffects: g.allowSideEffects,
     allowHostModules: g.allowHostModules === undefined ? false : g.allowHostModules,
-    loadedAt: g.loadedAt, dirty: g.dirty, exports: g.manifest, events: g.eventsList,
+    loadedAt: g.loadedAt, dirty: g.dirty, exports: g.manifest, events: g.eventsList, tools: toolsList(g),
     warnings: g.warnings, reloaded: meta.reloaded || undefined,
     pendingRestore: PENDING_RESTORE > 0 ? PENDING_RESTORE : undefined,
     untrackedJournal: untrackedCount > 0 ? untrackedCount : undefined, // journal 中不可还原的 fs 写条目数

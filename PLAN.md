@@ -92,3 +92,13 @@ vm context 实测缺:URL、URLSearchParams、TextEncoder、TextDecoder、AbortCo
 - **新增 dev_cleanup {dropAll}**:跳过回放直接清空写日志(先 killTimers(M1 审查发现:否则目标残留定时器在清理后继续写库,终态不可信)),返回 dropped/droppedEntries。用途:实测后确认终态、清除历史遗留孤儿(避免"回放 remove→还原孤儿"循环)。与 force 同传 dropAll 优先。
 - 附带:gw-call.js 网关直连排障脚本(客户端 schema 缓存缺新参数/30s 掐断时的兜底;仅回环、key 不打印、工具级错误非零退出)。
 - 审查:plan-code-reviewer 裁决"修后可合入",M1(killTimers)/M2(上线验证:重载后以 tools/list 出现 dropAll、响应 dropped:true 为准)/s1(droppedEntries)/s2(README·description 口径)/s3(5d 定时器断言+5e bulk 覆盖还原) 全部落实;m1(retryable 过度还原)以文档口径记录。
+
+## v3.2 uTools 8.0 公测适配(2026-09-20)
+
+对照 next.u-tools.cn 8.0 文档(公测 beta.6;运行时 Electron 34.5.8 / Chromium 132 / Node 20.19.1)的差异更新。桥赖以工作的底座(plugin.json `tools` 字段 + `utools.registerTool()` + 内置 MCP 服务,设置→AI 设置→MCP 服务)在 8.0 已正式化,机制不变。
+
+- **新增生命周期捕获**:`onPluginReady`(Runtime 等 callback 完成再进入)、`onScheduleTrigger`(定时任务触发,插件未运行会被拉起)入 EVENT_APIS——此前未拦截,目标注册会真挂到宿主 Runtime(副作用泄漏);对应 dev_call 特殊名 `__ready`(args=[])、`__schedule`(args=[{code}])。
+- **registerTool 捕获(核心)**:目标 preload 调 `utools.registerTool(name, handler)` 不再纯 no-op,handler 捕获进 `gen.tools`;dev_call 新特殊名 `__tool:<name>`(args=[params])按 MCP ToolContext 形态补仿真 ctx(`{requestId:"dev_call", sendProgress}` ,sendProgress 录入调用流水 `tool.progress:<name>`);dev_load/dev_list 返回 `tools` 清单。目标 8.0 MCP 工具处理器从此可在桥内被 agent 直接驱动测试。未注册名报 UNKNOWN_EXPORT 并列已注册清单。
+- **定时任务 API 入 stub**:`requestSchedule`(弹用户确认+创建持久任务)、`removeSchedule`(删真任务)默认 stub;`getSchedules` 只读透传。
+- **plugin.json**:version 0.3.0,六工具 description 同步新特殊名;`tools` 字段格式与 8.0 文档一致(对象 keyed by name,description+inputSchema 必填),无需结构变更。文档把 `features` 标为必填,但实测 AI-only(tools-only)清单仍被开发者工具容忍且冷启动常驻——保持无 main/features 现状,冷启动失败回退方案见 README。
+- selftest 新增第 19 组用例(12 断言):8.0 事件登记/触发、tools 清单、`__tool:` 调用+未知名、requestSchedule/removeSchedule stub 宿主零触达;全套通过。

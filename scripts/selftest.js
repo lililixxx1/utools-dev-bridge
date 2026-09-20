@@ -22,6 +22,10 @@ global.utools = {
   copyText: (t) => { global.__clipboard = t; },
   onPluginEnter: () => {}, onPluginOut: () => {}, onMainPush: () => {},
   onPluginDetach: () => {}, onDbPull: () => {},
+  onPluginReady: () => {}, onScheduleTrigger: () => {}, // 8.0 新增生命周期
+  requestSchedule: async () => { global.__schedAsked = (global.__schedAsked || 0) + 1; },
+  getSchedules: () => [],
+  removeSchedule: () => { global.__schedRemoved = (global.__schedRemoved || 0) + 1; },
   db: {
     get: (id) => dbDocs.get(id) || null,
     put: (doc) => {
@@ -80,6 +84,9 @@ fs.writeFileSync(
     'utools.onPluginEnter(({ code, type, payload }) => { console.log("enter", code, type, payload); });',
     'utools.onPluginOut(() => { console.log("out-cb"); });',
     'utools.onMainPush(({ code }) => { console.log("push-cb", code); });',
+    'utools.onPluginReady(() => { console.log("ready-cb"); });', // 8.0
+    'utools.onScheduleTrigger(({ code }) => { console.log("schedule-cb", code); });', // 8.0
+    'utools.registerTool("say_hi", (params, ctx) => ({ echo: params && params.text, hasCtx: !!ctx }));', // 8.0 MCP 工具
     'window.demo = {',
     '  add: math.add,',
     '  withTax: math.withTax,',
@@ -92,6 +99,8 @@ fs.writeFileSync(
     '  bulkCreate: (ids) => ut().db.bulkDocs(ids.map((id) => ({ _id: id, src: "bulk" }))),',
     '  arm: (ms) => { setTimeout(() => { ut().db.put({ _id: "_dev_:late", n: 1 }); }, ms); return "armed"; },',
     '  echoClipboard: (t) => ut().copyText(t),',
+    '  armSchedule: () => utools.requestSchedule({ code: "t1", label: "桥测", trigger: 60000 }),', // 8.0
+    '  dropSchedule: () => utools.removeSchedule("t1"),', // 8.0
     '  boom: () => { throw new Error("炸了:boom-test"); },',
     '  slow: () => new Promise((r) => setTimeout(() => r("slow-done"), 100)),',
     '  spawnEcho: () => cp.exec("echo hi"),',
@@ -410,6 +419,32 @@ assert(Object.keys(tools).length === 6, "注册了 6 个工具: " + Object.keys(
   assert(con.entries.some((e) => JSON.stringify(e.args).indexOf("push-cb") >= 0), "onMainPush 回调执行");
   r = await tools.dev_call({ name: "__dbPull" });
   assert(!r.ok && r.code === "UNKNOWN_EXPORT", "__dbPull 未注册时给明确错误");
+
+  // 19) 8.0 适配:onPluginReady/onScheduleTrigger 登记+触发、registerTool 捕获为 __tool:、定时任务 API stub
+  r = await tools.dev_load({ path: fx });
+  assert(r.events.some((e) => e.api === "utools.onPluginReady") && r.events.some((e) => e.api === "utools.onScheduleTrigger"),
+    "8.0 事件登记(onPluginReady/onScheduleTrigger)");
+  assert(r.tools.some((t) => t.name === "say_hi"), "dev_load 返回 registerTool 捕获的工具清单");
+  r = await tools.dev_call({ name: "__ready" });
+  assert(r.ok, "__ready 触发 onPluginReady");
+  con = await tools.dev_console({ since: r.consoleFrom });
+  assert(con.entries.some((e) => JSON.stringify(e.args).indexOf("ready-cb") >= 0), "onPluginReady 回调执行");
+  r = await tools.dev_call({ name: "__schedule", args: [{ code: "drink-water" }] });
+  assert(r.ok, "__schedule 触发 onScheduleTrigger");
+  con = await tools.dev_console({ since: r.consoleFrom });
+  assert(con.entries.some((e) => JSON.stringify(e.args).indexOf("schedule-cb") >= 0 && JSON.stringify(e.args).indexOf("drink-water") >= 0),
+    "onScheduleTrigger 回调执行(code 透传)");
+  r = await tools.dev_call({ name: "__tool:say_hi", args: [{ text: "hi8" }] });
+  assert(r.ok && r.result && r.result.echo === "hi8" && r.result.hasCtx === true, "__tool:say_hi 调用捕获的 handler(params+仿真 ctx)");
+  r = await tools.dev_call({ name: "__tool:nope" });
+  assert(!r.ok && r.code === "UNKNOWN_EXPORT" && /say_hi/.test(r.message), "__tool 未知名返回已注册清单");
+  global.__schedAsked = 0; global.__schedRemoved = 0;
+  r = await tools.dev_call({ name: "demo.armSchedule" });
+  assert(r.ok && r.result && r.result.stubbed === true && global.__schedAsked === 0, "requestSchedule 默认 stub(宿主未触达)");
+  r = await tools.dev_call({ name: "demo.dropSchedule" });
+  assert(r.ok && r.result && r.result.stubbed === true && global.__schedRemoved === 0, "removeSchedule 默认 stub");
+  r = await tools.dev_list();
+  assert(r.ok && r.tools.some((t) => t.name === "say_hi"), "dev_list 返回工具清单");
 
   console.log(process.exitCode ? "\n== SELFTEST FAILED ==" : "\n== SELFTEST ALL PASS ==");
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exitCode = 1; });
