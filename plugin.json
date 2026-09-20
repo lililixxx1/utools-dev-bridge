@@ -1,7 +1,11 @@
 {
   "logo": "logo.png",
   "preload": "preload/index.js",
-  "version": "0.3.0",
+  "main": "fallback-ui.html",
+  "features": [
+    { "code": "devbridge", "description": "开发桥(AI 测试桥保活入口)", "cmds": ["开发桥"] }
+  ],
+  "version": "0.3.1",
   "name": "devbridge",
   "pluginName": "开发桥 dev-bridge",
   "description": "面向 AI Agent 的 uTools 插件开发测试桥:沙箱加载目标插件 preload,支持调用/日志/调用流水/副作用还原",

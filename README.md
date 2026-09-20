@@ -1,8 +1,8 @@
 # dev-bridge — uTools 插件开发测试桥
 
-让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。
+让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + 一页保活入口,见下文)。
 
-> uTools 8.0 公测适配版(v0.3.0):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。
+> uTools 8.0 公测适配版(v0.3.1):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具把 `features` 标为必填,清单已内置保活入口。
 
 > 仓库:https://github.com/lililixxx1/utools-dev-bridge
 
@@ -12,7 +12,7 @@
 |---|---|
 | `preload/index.js` | 桥的全部实现(单文件 CommonJS;文件头注释 = 机制总览 + 错误码契约,改契约先改它) |
 | `plugin.json` | 插件清单 + 六个 dev_* 工具的 description/inputSchema |
-| `fallback-ui.html` / `logo.png` | 冷启动回退保活页(见下文)/ 图标 |
+| `fallback-ui.html` / `logo.png` | 保活入口页(plugin.json 的 main 指向它)/ 图标 |
 | `scripts/selftest.js` | 纯 Node 自测(mock utools 后 require 桥,验证全链路;改 preload 后必跑) |
 | `scripts/rt-check/` | 真机回归目标插件(`runAll(filter?)` / `probeHost()`) |
 | `scripts/fixtures/` | demo-plugin / loop-plugin 假目标插件 |
@@ -24,16 +24,11 @@
 ## 一次性安装(唯一人工步骤)
 
 1. uTools → 开发者工具(开发者插件)→ 加载本目录(`utools-dev-bridge/`,选含 plugin.json 的目录)
-2. **重启 uTools**(验证 AI-only 插件冷启动常驻:重启后不打开任何插件,tools/list 里应出现 `dev_*` 六工具)
+2. **重启 uTools**(不打开任何插件,tools/list 里应出现 `dev_*` 六工具——8.0 起 MCP 服务支持工具调用时按需拉起插件)
 3. agent 侧:ZCode `~/.zcode/cli/config.json` 的 `mcp.servers.utools` 指向 `http://127.0.0.1:3501/mcp`(已配好),key 用 uTools 设置 → AI Agent 连接里复制的值
 
-### 回退:冷启动失败时
-若重启后 tools/list 没出现 dev_*,说明该版本不自动执行 AI-only preload。给 plugin.json 加:
-```json
-"main": "fallback-ui.html",
-"features": [{ "code": "devbridge", "explain": "开发桥(保活入口)", "cmds": ["开发桥"] }]
-```
-并在 uTools 里打开一次"开发桥"让 preload 执行(每次重启 uTools 后需打开一次)。
+### 保活入口(已内置)
+uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态,不是功能 UI。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
 
 ## 本地自测(无需 uTools)
 

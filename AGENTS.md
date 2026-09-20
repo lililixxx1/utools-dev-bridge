@@ -1,6 +1,6 @@
 # AGENTS.md — utools-dev-bridge 工作须知
 
-uTools 插件开发测试桥:**纯 AI 插件,无 UI**(plugin.json 只有 logo/preload/tools)。让 agent 经 uTools MCP 网关(`http://127.0.0.1:3501/mcp`)沙箱加载/调用/调试任意 uTools 插件的 preload,并还原测试副作用。git 仓库(公开于 https://github.com/lililixxx1/utools-dev-bridge),无 npm 依赖、无构建/打包步骤。
+uTools 插件开发测试桥:**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + fallback-ui.html 保活入口,8.0 校验器必填 features)。让 agent 经 uTools MCP 网关(`http://127.0.0.1:3501/mcp`)沙箱加载/调用/调试任意 uTools 插件的 preload,并还原测试副作用。git 仓库(公开于 https://github.com/lililixxx1/utools-dev-bridge),无 npm 依赖、无构建/打包步骤。
 
 ## 目录
 
@@ -45,6 +45,8 @@ git push                        # 改动直接提交 main 并推送;提交信息
 
 v3.1 闭环:airss 全功能实测完毕,孤儿文档缺陷已修(bulkDocs 无前态回滚删除,selftest 5c 复刻),终态已清零。新增能力:生命周期特殊名(`__enter/__out/__detach/__mainPush/__dbPull/__domReady`)、DOM 极简 stub(选择器恒 null)、fs 写日志 WAL(前态先落盘,8MB/500 文件/64MB 上限)。
 
-2026-09-20 v3.2(uTools 8.0 公测适配,plugin.json 0.3.0):新生命周期 `__ready`/`__schedule` 入 EVENT_APIS(不拦截会真挂宿主);目标 `registerTool` 捕获进 gen.tools(null 原型),`dev_call __tool:<名>` 按 MCP ToolContext 仿真调用(dev_load/dev_list 返回 tools 清单);`requestSchedule`/`removeSchedule` 入 stub(requestSchedule stub 保 thenable,getSchedules 只读透传)。plan-code-reviewer 审核:可合入(无 Blocker/Major),4 Minor 已修(thenable/null 原型/非函数 handler 警告/tool.progress 文档),selftest 114 断言全绿,rt-check 增 3 个 v80 真机用例待下次实机回归。8.0 运行时 Electron 34/Node 20;`tools` 字段与内置 MCP 服务已正式化,桥底座机制不变;真机升级 beta 后需重载插件,若 tools/list 无 dev_* 走 README 冷启动回退。
+2026-09-20 v3.2(uTools 8.0 公测适配,plugin.json 0.3.0):新生命周期 `__ready`/`__schedule` 入 EVENT_APIS(不拦截会真挂宿主);目标 `registerTool` 捕获进 gen.tools(null 原型),`dev_call __tool:<名>` 按 MCP ToolContext 仿真调用(dev_load/dev_list 返回 tools 清单);`requestSchedule`/`removeSchedule` 入 stub(requestSchedule stub 保 thenable,getSchedules 只读透传)。plan-code-reviewer 审核:可合入(无 Blocker/Major),4 Minor 已修(thenable/null 原型/非函数 handler 警告/tool.progress 文档),selftest 114 断言全绿,rt-check 增 3 个 v80 真机用例待下次实机回归。8.0 运行时 Electron 34/Node 20;`tools` 字段与内置 MCP 服务已正式化,桥底座机制不变。
+
+2026-09-20 热修(0.3.1):真机反馈 8.0 开发者工具安装报"plugin.json features 无效"——8.0 校验器把 features 标必填,AI-only(tools-only)清单不再被容忍。plugin.json 内置 `main: fallback-ui.html` + `features`(「开发桥」保活指令);重启后 dev_* 无响应时打开一次「开发桥」拉起 preload。
 
 2026-09-18:建 git 仓库并公开(github.com/lililixxx1/utools-dev-bridge),初始提交收录全部 20 文件;文档同步公开口径。
