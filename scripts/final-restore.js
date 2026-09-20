@@ -9,7 +9,9 @@ const os = require("os");
 const path = require("path");
 
 const ORPHAN_FEED = "feed:7a8d0aff-51b9-4494-bc2f-6f487cbe04b8";
-const PREFIX = "utools.dev_zii2hjtj.";
+// 插件前缀不写死:8.0 网关为 utools_plugin_dev_zii2hjtj_<名>(下划线),旧版为 utools.dev_zii2hjtj.<名>;
+// initialize 后经 tools/list 探测(见下方 main 里 PREFIX 赋值)
+let PREFIX = null;
 
 const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".zcode", "cli", "config.json"), "utf8"));
 const srv = (((cfg.mcp || {}).servers || {})["utools"]) || {};
@@ -45,6 +47,12 @@ const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + labe
 (async () => {
   await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "final-restore", version: "0.1" } });
   await fetch(url, { method: "POST", headers: { ...H, "Mcp-Session-Id": SID }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }).catch(() => {});
+  {
+    const tl = await rpc("tools/list", {});
+    const cand = ((tl.tools) || []).map((t) => String(t.name)).find((n) => n.includes("dev_zii2hjtj") && n.endsWith("dev_load"));
+    if (!cand) throw new Error("tools/list 里找不到本插件的 dev_load(插件未装载或网关 key 失效)");
+    PREFIX = cand.slice(0, -"dev_load".length);
+  }
 
   const t0 = Date.now();
   const load = await call("dev_load", { path: "C:/Users/Administrator/Desktop/ccc/ccc/airss", allowHostModules: ["http", "https"] });

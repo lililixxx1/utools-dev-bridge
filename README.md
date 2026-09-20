@@ -15,6 +15,7 @@
 | `fallback-ui.html` / `logo.png` | 保活入口页(plugin.json 的 main 指向它)/ 图标 |
 | `scripts/selftest.js` | 纯 Node 自测(mock utools 后 require 桥,验证全链路;改 preload 后必跑) |
 | `scripts/rt-check/` | 真机回归目标插件(`runAll(filter?)` / `probeHost()`) |
+| `scripts/rt-run.js` | 真机回归一键驱动(单进程背靠背:前缀探测 → dev_load → runAll/probeHost/v80 用例 → `__tool:` 端到端 → 还原核对) |
 | `scripts/fixtures/` | demo-plugin / loop-plugin 假目标插件 |
 | `scripts/gw-call.js` | 网关直连兜底(schema 缓存 / 30s 掐断时用;仅回环,key 不打印) |
 | `scripts/gsm-harness.js` | github-stars-manager-for-utools 存储层真机 harness(经桥跑的业务插件断言示例) |
@@ -36,7 +37,7 @@ uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json f
 node scripts/selftest.js   # 在仓库根目录下跑;mock utools 全局,验证桥全链路
 ```
 
-改 `preload/index.js` 后必跑;通过再走真机回归(下节)。
+改 `preload/index.js` 后必跑;通过再走真机回归(uTools 里装好本插件后,`node scripts/rt-run.js` 一键,或按下节工作流手工调 dev_*)。
 
 ## agent 工作流(测试循环)
 
@@ -92,5 +93,6 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 | 沙箱脏(dirty) | 任何一次 dev_* 会自动重建;dev_list 可查 dirty 状态 |
 | 网关 403 | key 轮换,重复制 |
 | 异步 dev_call 长于 ~30s 被客户端掐断 | MCP 客户端有自身调用超时;超长异步任务改为目标内自录结果(写 db/console),事后读取,不要靠 dev_call 同步等待;或用 `node scripts/gw-call.js <tool> '<json>'` 直连网关(长超时,且不受客户端 schema 缓存影响) |
-| MCP 客户端把 dev_load 的新参数(如 allowHostModules)滤掉 | 会话缓存的工具 schema 落后于 plugin.json;用 scripts/gw-call.js 直连网关调用(自动读本机 key、补 `utools.<pluginId>.` 前缀) |
+| MCP 客户端把 dev_load 的新参数(如 allowHostModules)滤掉 | 会话缓存的工具 schema 落后于 plugin.json;用 scripts/gw-call.js 直连网关调用(自动读本机 key、探测插件前缀:8.0 为 `utools_plugin_<id>.<名>` 风格下划线,旧版 `utools.<id>.<名>` 点分隔) |
+| 网关报 Tool not found(旧脚本写死 `utools.<id>.<名>`) | uTools 8.0 把网关工具名改为 `utools_plugin_<id>_<名>`(下划线);直连脚本一律经 tools/list 动态探测前缀(gw-call.js / rt-run.js / final-restore.js 已内置) |
 | 沙箱定时器不触发(真机已观察到) | timer.schedule/timer.fire 已全程入 dev_calls_log;若 schedule 有而 fire 无,说明宿主挂起该渲染进程的定时器队列——目标代码不要依赖跨 dev_call 的延迟回调,改同步或轮询 |

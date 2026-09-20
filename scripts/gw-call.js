@@ -9,13 +9,13 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+// 网关侧工具名带插件前缀:8.0 为 utools_plugin_dev_zii2hjtj_<名>(下划线),旧版为 utools.dev_zii2hjtj.<名>(点)。
+// 裸名经 tools/list 动态探测前缀(两种命名都兼容);带分隔符的完整名按原样使用。
 const tool = process.argv[2];
 if (!tool) {
   console.error("usage: node gw-call.js <toolName> [jsonArgs]");
   process.exit(2);
 }
-// 网关侧工具名带 utools.<pluginId>. 前缀;裸名自动补 dev 桥前缀
-const fullTool = tool.includes(".") ? tool : "utools.dev_zii2hjtj." + tool;
 let args = {};
 if (process.argv[3]) {
   try {
@@ -94,6 +94,18 @@ async function rpc(method, params, sessionId) {
     headers: { ...baseHeaders, "Mcp-Session-Id": sid },
     body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
   }).catch(() => {});
+  // 裸名 → 经 tools/list 探测本插件前缀(8.0 改了命名规范,不能写死)
+  let fullTool = tool;
+  if (!tool.includes(".")) {
+    const tl = await rpc("tools/list", {}, sid);
+    const all = ((tl.body && tl.body.result && tl.body.result.tools) || []).map((t) => String(t.name));
+    const cand = all.find((n) => n.includes("dev_zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)));
+    if (!cand) {
+      console.error("tool not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded?");
+      process.exit(1);
+    }
+    fullTool = cand;
+  }
   const out = await rpc("tools/call", { name: fullTool, arguments: args }, sid);
   if (!out.body || out.body.result === undefined) {
     console.error("GW-FAIL: no result in gateway response");
