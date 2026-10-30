@@ -65,7 +65,8 @@ const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + labe
   // 1) tools/list:六工具应全部注册到 MCP;并探测本插件前缀(8.0 下划线/旧版点分隔)
   const tl = await rpc("tools/list", {});
   const all = (tl.tools || []).map((t) => String(t.name));
-  const devLoadFull = all.find((n) => n.includes("dev_zii2hjtj") && n.endsWith("dev_load"));
+  // 插件 id 会漂移(dev_zii2hjtj / 8.0 重装后 zii2hjtj),匹配用核心 id zii2hjtj 兼容两种
+  const devLoadFull = all.find((n) => n.includes("zii2hjtj") && n.endsWith("dev_load"));
   PREFIX = devLoadFull ? devLoadFull.slice(0, -"dev_load".length) : null;
   if (!PREFIX) throw new Error("tools/list 里找不到本插件的 dev_load(可能插件未装载/网关 key 失效)");
   const mine = all.filter((n) => n.startsWith(PREFIX));

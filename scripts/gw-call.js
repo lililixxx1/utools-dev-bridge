@@ -9,7 +9,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// 网关侧工具名带插件前缀:8.0 为 utools_plugin_dev_zii2hjtj_<名>(下划线),旧版为 utools.dev_zii2hjtj.<名>(点)。
+// 网关侧工具名带插件前缀:8.0 为 utools_plugin_<id>_<名>(下划线),旧版为 utools.<id>.<名>(点)。
+// 插件 id 会漂移:开发者工具装载为 dev_zii2hjtj,8.0 重装后为 zii2hjtj(dev_ 前缀丢失),匹配统一用核心 id zii2hjtj 兼容两种。
 // 全名/裸名统一经 tools/list 解析:精确匹配优先(8.0 下划线全名不含点,includes(".") 判不了全名),
 // 裸名再按"本插件前缀 + 裸名"补全,两种命名都兼容。
 const tool = process.argv[2];
@@ -101,7 +102,7 @@ async function rpc(method, params, sessionId) {
     const tl = await rpc("tools/list", {}, sid);
     const all = ((tl.body && tl.body.result && tl.body.result.tools) || []).map((t) => String(t.name));
     fullTool = all.find((n) => n === tool)
-      || all.find((n) => n.includes("dev_zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)))
+      || all.find((n) => n.includes("zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)))
       || null;
     if (!fullTool) {
       console.error("tool '" + tool + "' not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded? name spelled right?");

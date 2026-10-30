@@ -9,7 +9,8 @@ const os = require("os");
 const path = require("path");
 
 const ORPHAN_FEED = "feed:7a8d0aff-51b9-4494-bc2f-6f487cbe04b8";
-// 插件前缀不写死:8.0 网关为 utools_plugin_dev_zii2hjtj_<名>(下划线),旧版为 utools.dev_zii2hjtj.<名>;
+// 插件前缀不写死:8.0 网关为 utools_plugin_<id>_<名>(下划线),旧版为 utools.<id>.<名>(点);
+// 插件 id 会漂移(dev_zii2hjtj / 8.0 重装后 zii2hjtj),匹配用核心 id zii2hjtj 兼容两种。
 // initialize 后经 tools/list 探测(见下方 main 里 PREFIX 赋值)
 let PREFIX = null;
 
@@ -49,7 +50,7 @@ const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + labe
   await fetch(url, { method: "POST", headers: { ...H, "Mcp-Session-Id": SID }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }).catch(() => {});
   {
     const tl = await rpc("tools/list", {});
-    const cand = ((tl.tools) || []).map((t) => String(t.name)).find((n) => n.includes("dev_zii2hjtj") && n.endsWith("dev_load"));
+    const cand = ((tl.tools) || []).map((t) => String(t.name)).find((n) => n.includes("zii2hjtj") && n.endsWith("dev_load"));
     if (!cand) throw new Error("tools/list 里找不到本插件的 dev_load(插件未装载或网关 key 失效)");
     PREFIX = cand.slice(0, -"dev_load".length);
   }
