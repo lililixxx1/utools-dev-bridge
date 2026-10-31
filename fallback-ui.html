@@ -2,21 +2,26 @@
 <html lang="zh">
 <head><meta charset="utf-8"><title>dev-bridge</title>
 <style>
-body{font-family:system-ui;background:#181c26;color:#9ad1ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+body{font-family:system-ui;background:#181c26;color:#9ad1ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:0 16px;box-sizing:border-box}
 div{text-align:center}
 h1{font-size:18px;font-weight:600}
 p{color:#76839e;font-size:13px}
 .res{margin-top:18px;padding-top:14px;border-top:1px solid #333b4e}
-.sec{color:#68738f;font-size:11px;letter-spacing:2px;margin:14px 0 7px}
+.sec{color:#93a1bd;font-size:11px;letter-spacing:2px;margin:14px 0 7px}
 a{color:#9ad1ff;text-decoration:none;border-bottom:1px dotted #4a5a78}
 .item{font-size:13px;margin:5px 0}
 .item b{font-weight:600}
+code{background:#2a3348;color:#aebdd8;padding:2px 6px;border-radius:4px;font-size:12px;word-break:break-all}
 </style>
 </head>
 <body><div>
 <h1>开发桥 dev-bridge 已就绪</h1>
 <p>此窗口仅用于冷启动回退时拉起 preload,保持后台即可。<br>工具面与用法见仓库 README;agent 经 MCP 的 dev_* 工具调用。</p>
 <div class="res">
+<p class="sec">使 用 方 式</p>
+<p class="item">1. uTools 设置 → 「AI Agent 连接」,开启并复制 key</p>
+<p class="item">2. agent 的 MCP 端点 <code>http://127.0.0.1:3501/mcp</code></p>
+<p class="item">3. key 填进 agent 配置,对话中让 agent 调 dev_* 工具(见 README)</p>
 <p class="sec">仓 库</p>
 <p class="item"><a href="https://github.com/lililixxx1/utools-dev-bridge" target="_blank" rel="noopener">github.com/lililixxx1/utools-dev-bridge</a></p>
 <p class="sec">配 套 AI 技 能 · 仓库 skills/ 目录</p>
