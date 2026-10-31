@@ -109,7 +109,3 @@ node scripts/gw-call.js <tool> '<json>'     # 网关直连兜底(schema 缓存/3
 
 - **uTools 8.0 适配**(v0.3.0 起):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具校验:`features` 必填、工具 `description` 非空且 ≤500 字符、inputSchema 禁 oneOf 等组合构造——均已适配。
 - **v0.3.3 性能**:journal 落盘改 NDJSON 增量追加(实测 1500 次 4KB kv 写 2746ms→390ms);spill 迁 `getPluginLocalDataPath()/devbridge-spill/`(temp 遗留自动迁移)。
-
-## 分发口径
-
-`skills/` 是配套技能的公开分发快照(维护源在本机,改本机技能后手动同步);`utools-plugin-dev` 公开版不含 `references/builder/`(官方非公开渠道内容)。技能与本 README 冲突时,以本 README 为准。
