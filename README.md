@@ -1,5 +1,7 @@
 # dev-bridge — uTools 插件开发测试桥
 
+![version](https://img.shields.io/badge/version-0.3.3-blue) ![uTools](https://img.shields.io/badge/uTools-8.0.2%20tested-brightgreen) ![runtime](https://img.shields.io/badge/Electron%2034%20%C2%B7%20Node%2020-339933) ![tools](https://img.shields.io/badge/MCP-6%20dev%20tools-blueviolet) ![selftest](https://img.shields.io/badge/selftest-133%20assertions-success) ![last commit](https://img.shields.io/github/last-commit/lililixxx1/utools-dev-bridge)
+
 让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + 一页保活入口)。
 
 六个工具:`dev_load`(沙箱加载目标插件)→ `dev_call`(调导出函数/生命周期/`__tool:<名>`)→ `dev_console` / `dev_calls_log`(看现场)→ `dev_list`(状态)→ `dev_cleanup`(还原 db/fs 写副作用)。配套两个 AI 技能(见 [`skills/`](skills/README.md)):桥的实测驾驶手册 + uTools 插件开发 API 参考。
