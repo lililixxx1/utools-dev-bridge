@@ -9,8 +9,10 @@ dev-bridge 工作流的两个配套 AI 技能，脱敏后随本仓库公开分�
 
 ## 安装
 
+技能目录路径因 agent 客户端而异（ZCode/通用 agents 用 `~/.agents/skills/`，Claude Code、Codex 等按各自约定），装进**你所用客户端的技能目录**即可。以 ZCode 为例：
+
 ```bash
-# clone 本仓库后,复制到本机技能目录(ZCode/通用 agents)
+# clone 本仓库后,复制到本机技能目录
 cp -r skills/utools-dev-bridge skills/utools-plugin-dev ~/.agents/skills/
 ```
 
