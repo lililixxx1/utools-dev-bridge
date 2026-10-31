@@ -57,4 +57,6 @@ v3.1 闭环:airss 全功能实测完毕,孤儿文档缺陷已修(bulkDocs 无前
 
 2026-09-20 审核落实(cffbe7b 复审,裁决"修后可合入",无 Blocker):2 Major 全修——① gw-call.js 全名解析改 tools/list 精确匹配优先(8.0 下划线全名不含点,原 `includes(".")` 判全名会误报 not found);② rt-run.js 终态断言改直证(dev_cleanup `failures` 为空 + dev_list 无 `pendingRestore`/`untrackedJournal`;原"二次 cleanup 计数为零"对失败条目保留重试的场景无鉴别力)。3 Minor + 3 Nit 同批:rpc 加 !res.ok(403 提示 key 轮换)与 isError 守卫、README 前缀笔误、runAll `total>=22` 防用例静默删减、SSE 判定正则三处统一锚定、去掉末尾 process.exit。m3(抽 gw-lib.js 公共模块)未采纳,按审核备选方案维持脚本自包含、匹配规则三处统一——本仓排障脚本按约定各自独立、可整份复制。真机复跑 rt-run 12 项全绿;gw-call 裸名/8.0 全名/错名三路径验证通过。
 
+2026-10-31 v3.3(0.3.3,性能优化+spill 迁移):journal 落盘 NDJSON 增量追加(旧版每条入账全量 stringify+rename,O(N²) 同步写阻塞宿主)实测 600 次 4KB kv 写 948ms→190ms、1500 次 2746ms→390ms(线性化);spill 迁 `getPluginLocalDataPath()/devbridge-spill/`(旧 temp 目录启动自动迁移、>7 天弃置清空、旧 journal.json 兼容回读);环形缓冲均摊 O(1)、mkdir 标志缓存、denied 子代理缓存。**踩坑:cleanupSpillDir 删目录必须重置 mkdir 标志,否则 writeSpillBuffer ENOENT、破坏性操作被误报 DENIED_FS_UNTRACKED**。selftest 新增 20/21/22 三节(132 断言全绿);对外字段/错误码零变化;rt-run 待真机复跑。
+
 2026-09-18:建 git 仓库并公开(github.com/lililixxx1/utools-dev-bridge),初始提交收录全部 20 文件;文档同步公开口径。

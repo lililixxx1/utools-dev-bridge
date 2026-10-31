@@ -54,7 +54,7 @@ vm context 实测缺:URL、URLSearchParams、TextEncoder、TextDecoder、AbortCo
 ## P3 可靠性小修集
 - **代理缓存**:代际级 Map,键 (realObj, apiPath) 二元组,wrapFnNamespace 一并入缓存(修 `utools.db === utools.db` identity + 性能);存 gen 上,热重载即失效(保 v2 G8 语义)
 - **console 补全**:table/trace/dir/time/timeEnd/timeLog/group/groupEnd/clear/assert/count,录制或安全 noop(现在 console.table 直接 TypeError)
-- **journal 持久化(决策 5 裁决)**:fs 前态**每文件单独存 spill**(`getPath("temp")/devbridge-journal/`,try/catch + fallback `os.tmpdir()` + mkdir -p;spill 写入必须用桥自身 require('fs'),绝不经沙箱 shim,否则递归);JSON 只存元数据+文件引用(dbStorage 放不下 8MB 级前态,弃用);落盘时机=WAL 写前;桥顶层回灌,存在未还原 journal 时 dev_list/dev_load 显式提示;还原成功删 spill;丢最旧时 cleanup 返回 `truncated:true`
+- **journal 持久化(决策 5 裁决)**:fs 前态**每文件单独存 spill**(原 `getPath("temp")/devbridge-journal/`——**v3.3 已迁 `getPluginLocalDataPath()/devbridge-spill/` 并改 NDJSON 增量落盘,见文末 v3.3 节**;try/catch + fallback `os.tmpdir()` + mkdir -p;spill 写入必须用桥自身 require('fs'),绝不经沙箱 shim,否则递归);JSON 只存元数据+文件引用(dbStorage 放不下 8MB 级前态,弃用);落盘时机=WAL 写前;桥顶层回灌,存在未还原 journal 时 dev_list/dev_load 显式提示;还原成功删 spill;丢最旧时 cleanup 返回 `truncated:true`
 - **timers/microtask 回调 try/catch + 录入 ringConsole(level:"uncaught"),不重抛**(M2——现在目标异步异常直接冒宿主 uncaughtException);process.nextTick 的 Promise 包装同理
 - devCall 异步 guard 成功路径 clearTimeout(小泄漏)
 - **dev_cleanup 失败条目保留(M4)**:还原成功才移除 journal 条目;失败的保留可重试,返回 `retryable:true` + 完整细节(现在无条件 `journal.length = 0`)
@@ -107,3 +107,18 @@ vm context 实测缺:URL、URLSearchParams、TextEncoder、TextDecoder、AbortCo
 - **热修 0.3.2(2026-09-20 真机反馈)**:8.0 开发者工具报 `tools "dev_call" schema 配置错误:description 必须为非空字符串,且长度 ≤500 字符`——工具 description 有 500 字符硬上限,v3.2 扩写后 dev_call 达 528 被拒装。压缩至 413(信息不丢,口径与 README 对齐);selftest 新增六工具 description 长度合规断言防回归(120 项全绿)。经验:改 plugin.json 工具 description 后跑 selftest 即可先拦此类校验错误,真机安装前先过一遍。
 - **真机回归全绿 + 8.0 网关命名适配(2026-09-20)**:0.3.2 安装通过后实机回归,appVersion 8.0.0-beta.6 / Node 20.19.1;runAll 22 例全绿(含 v80.events/v80.registerTool)、`rt.v80ScheduleStub` thenable stub、`__tool:rt8_probe` 端到端(合成 ToolContext)、dev_cleanup 还原终态清零。回归发现 **8.0 网关工具名改版**:`utools_plugin_<id>_<名>`(下划线)取代旧 `utools.<id>.<名>`,硬编码前缀的直连脚本全部失效——gw-call.js / final-restore.js 改为 initialize 后经 tools/list 动态探测前缀(新旧命名都兼容);同时把本次回归流程固化为 `scripts/rt-run.js`(单进程背靠背,12 项断言,含还原核对),此后真机回归一键完成。
 - **cffbe7b 复审落实(plan-code-reviewer 裁决"修后可合入",2 Major + 3 Minor + 3 Nit 全处理)**:M1 gw-call.js 全名解析改 tools/list 精确匹配优先(8.0 下划线全名不含点,`includes(".")` 判全名失效会误报 not found;错名报错回显被查名);M2 rt-run.js 终态断言改直证——`dev_cleanup failures` 为空 + dev_list 无 `pendingRestore`/`untrackedJournal`,替代原"二次 cleanup 计数为零"(失败条目保留重试时不增计数,原断言无鉴别力);m1 rpc 加 `!res.ok`(403 附 key 轮换提示)与 `isError` 守卫、`ra.result` 空对象兜底;m2 README 前缀笔误(`utools_plugin_<id>.<名>`→`<id>_<名>`);m3 按审核备选方案不抽公共模块(维持排障脚本自包含可整份复制的仓风格),匹配规则三处统一;nit:runAll `total>=22` 防删减、SSE 判定正则 `/^(event:|data:)/m` 三处统一锚定、去掉末尾 process.exit(与 final-restore 同形)。真机复跑 rt-run 12 项全绿,gw-call 裸名/8.0 全名/错名三路径验证通过。
+
+## v3.3:性能优化 + spill 持久化迁移(2026-10-31 已实施,plugin.json 0.3.3)
+
+依据 2026-09-20 提取的官方 builder 规范《数据存储》(已镜像至 utools-plugin-dev skill `references/builder/storage.md`):需跨重启持久化的运行数据应存 `utools.getPluginLocalDataPath()`(该目录插件卸载都不自动删),临时目录属"会被清理"层。
+
+- **原状**:写日志 spill 落在系统临时目录——系统清理导致 journal 永久悬挂,只能 `force:true` 出口(README 口径),跨重启还原承诺有洞。
+- **实施**(用户确认性能优化与迁移合并一轮完成):
+  - **journal 落盘 NDJSON 化**:旧 `persistJournalMeta` 每条入账全量 `JSON.stringify(journal)`+writeFileSync+renameSync(O(N)/次、会话 O(N²),全阻塞宿主渲染进程)改为 `journal.ndjson` 每行一条 `appendFileSync`(O(条目));仅截断/驱逐/回滚/清理残留/旧格式转换才全量重写。回灌改逐行 parse,单行损坏只丢该行(旧版整文件 parse 失败全丢)。
+  - **spill 迁移**:落 `getPluginLocalDataPath()/devbridge-spill/`;启动一次性迁移旧 `getPath("temp")/devbridge-journal/`(同盘 rename、跨盘 copy+unlink,搬完删旧目录,防回灌后 spillPath 错位);遗留 >7 天视为弃置会话整体清空(口径:正常工作流每轮 cleanup 清零);旧 journal.json 兼容回读后转写 ndjson。
+  - **次级优化**:环形缓冲均摊 O(1)(越界槽置 undefined+start 前移,旧版环满每次 O(RING_MAX) splice);mkdir 标志缓存(免每次写付 mkdirSync);denied 子代理缓存(同路径 identity 稳定)。
+  - **修复实施中发现的自伤**:cleanupSpillDir 删目录后若不重置 mkdir 标志,后续 writeSpillBuffer ENOENT → 破坏性操作被误报 DENIED_FS_UNTRACKED(写类被 untracked 放行故此前未暴露);现删目录处一律重置。
+  - **明确不做**:bulkDocs 逐 doc 前态抓取(还原正确性要求)、recordCall 参数快照序列化(保留调用时快照语义,不做惰性)、dev_load 全量重建与孪生探针(热重载正确性与排障功能)。
+- **收益**:实测 600 次 4KB kv 写 948ms→190ms(5.0x)、1500 次 2746ms→390ms(7.0x),且随条目数线性(旧版超线性);`force:true` 从"spill 丢失时的出口"降为几乎不触发,dev_cleanup 还原保障跨 uTools 重启成立;冷启动回灌逐行 parse 更快更稳。
+- **回归**:selftest 新增 20(ndjson 落盘/清理)、21(子进程验证旧目录+旧格式迁移回灌)、22(性能阈值防退化)三节,132 断言全绿;对外字段/错误码/入参 schema 零变化,rt-run.js 12 项断言待真机复跑。
+- 同源情报已落文档不改代码:官方确认主窗隐藏后插件默认 3 分钟自动退出、MCP Tool 冷启动=未运行时无头拉起并在初始化执行 registerTool——已注记进 utools-dev-bridge SKILL.md 排障口径。

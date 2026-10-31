@@ -19,6 +19,7 @@ global.utools = {
   getNativeId: () => "selftest-native",
   getAppVersion: () => "6.0.0-selftest",
   getPath: (n) => path.join(os.tmpdir(), n),
+  getPluginLocalDataPath: () => path.join(os.tmpdir(), "plugindata"), // v3.3:spill 迁插件本地数据目录
   copyText: (t) => { global.__clipboard = t; },
   onPluginEnter: () => {}, onPluginOut: () => {}, onMainPush: () => {},
   onPluginDetach: () => {}, onDbPull: () => {},
@@ -95,6 +96,7 @@ fs.writeFileSync(
     '  hasApi: (k) => k in utools,',
     '  apiKeys: () => Object.keys(utools),',
     '  save: (k, v) => ut().dbStorage.setItem(k, v),',
+    '  perfKvWrites: (n) => { const v = "x".repeat(4096); for (let i = 0; i < n; i++) ut().dbStorage.setItem("_dev_:perf-" + i, v); return n; }, // v3.3 性能回归载荷',
     '  saveDoc: (id) => ut().db.put({ _id: id, hello: 1 }),',
     '  removeDoc: (id) => ut().db.remove(id),',
     '  bulkCreate: (ids) => ut().db.bulkDocs(ids.map((id) => ({ _id: id, src: "bulk" }))),',
@@ -143,7 +145,8 @@ fs.writeFileSync(path.join(loopFx, "plugin.json"), JSON.stringify({ preload: "pr
 fs.writeFileSync(path.join(loopFx, "preload", "index.js"), 'window.loop = { spin: () => { while (true) {} } };\n');
 
 // ---------- require 桥 ----------
-// 清掉上次运行遗留的 journal spill(桥 require 时会回灌,污染本次断言)
+// 清掉上次运行遗留的 journal spill(桥 require 时会回灌,污染本次断言;v3.3 新旧两个目录都清)
+fs.rmSync(path.join(os.tmpdir(), "plugindata", "devbridge-spill"), { recursive: true, force: true });
 fs.rmSync(path.join(os.tmpdir(), "temp", "devbridge-journal"), { recursive: true, force: true });
 require(path.join(__dirname, "..", "preload", "index.js"));
 
@@ -466,6 +469,105 @@ for (const [k, v] of Object.entries(pj.tools)) {
   assert(!r.ok && r.code === "UNKNOWN_EXPORT", "__tool:__proto__ 不命中原型链(M2)");
   r = await tools.dev_call({ name: "__tool:constructor" });
   assert(!r.ok && r.code === "UNKNOWN_EXPORT", "__tool:constructor 不命中原型链(M2)");
+
+  // 20) v3.3:journal NDJSON 增量落盘——入账即逐行 append,cleanup 后目录清空
+  await tools.dev_load({ path: fx });
+  await tools.dev_call({ name: "demo.save", args: ["_dev_:nd1", "a"] });
+  await tools.dev_call({ name: "demo.save", args: ["_dev_:nd2", "b"] });
+  await tools.dev_call({ name: "demo.saveDoc", args: ["_dev_:nd3"] });
+  const spillDir = path.join(os.tmpdir(), "plugindata", "devbridge-spill");
+  const ndjson = path.join(spillDir, "journal.ndjson");
+  assert(fs.existsSync(ndjson), "journal.ndjson 已落盘(增量追加格式)");
+  const ndLines = fs.readFileSync(ndjson, "utf8").split("\n").filter((l) => l);
+  assert(ndLines.length === 3, "ndjson 行数=入账数(3 条,当前 " + ndLines.length + ")");
+  let ndParsed = 0;
+  for (const l of ndLines) { const e = JSON.parse(l); if (e && e.kind) ndParsed++; }
+  assert(ndParsed === 3, "每行可独立 parse 且含 kind 字段");
+  r = await tools.dev_cleanup();
+  assert(r.ok && r.restored.kvRestore + r.restored.kvDelete + r.restored.dbRestore + r.restored.dbDelete >= 3, "20 节写入全部还原");
+  assert(!fs.existsSync(spillDir), "cleanup 后 spill 目录整体清空");
+
+  // 21) v3.3:旧 temp 目录 + 旧 journal.json 格式启动兼容迁移(子进程隔离,验证回灌+搬迁+转 ndjson)
+  const { spawnSync } = require("child_process");
+  const migBase = fs.mkdtempSync(path.join(os.tmpdir(), "devbridge-mig-"));
+  const migOld = path.join(migBase, "temp", "devbridge-journal");
+  const migNew = path.join(migBase, "plugindata", "devbridge-spill");
+  fs.mkdirSync(migOld, { recursive: true });
+  fs.writeFileSync(path.join(migOld, "pre-legacy-1.bin"), "PRE"); // 散落前态文件一并搬迁
+  fs.writeFileSync(path.join(migOld, "journal.json"), JSON.stringify([
+    { kind: "kv", crypto: false, key: "pre:legacy", prev: "旧值", api: "utools.dbStorage.setItem" },
+  ]));
+  const migScript = [
+    '"use strict";',
+    'const path = require("path");',
+    'const base = process.env.MIG_BASE;',
+    'const tools = {};',
+    'global.utools = {',
+    '  registerTool: (n, f) => { tools[n] = f; },',
+    '  getNativeId: () => "mig",',
+    '  getPath: (n) => path.join(base, n),',
+    '  getPluginLocalDataPath: () => path.join(base, "plugindata"),',
+    '};',
+    'Object.freeze(global.utools);',
+    'require(process.env.BRIDGE_PATH);', // 触发启动迁移 + 旧格式回灌
+    'tools.dev_list().then((r) => {',
+    '  if (!r.ok || r.pendingRestore !== 1) { console.error("MIG-FAIL:" + JSON.stringify(r)); process.exit(1); }',
+    '  console.log("MIG-OK");',
+    '});',
+  ].join("\n");
+  const mig = spawnSync(process.execPath, ["-e", migScript], {
+    env: Object.assign({}, process.env, { MIG_BASE: migBase, BRIDGE_PATH: path.join(__dirname, "..", "preload", "index.js") }),
+    encoding: "utf8", timeout: 30000,
+  });
+  assert(mig.status === 0 && /MIG-OK/.test(mig.stdout || ""), "旧目录 journal.json 回灌 pendingRestore=1(子进程输出: " + (mig.stdout || "") + (mig.stderr || "") + ")");
+  assert(!fs.existsSync(migOld), "旧 temp spill 目录迁移后已删除");
+  assert(fs.existsSync(path.join(migNew, "pre-legacy-1.bin")), "前态 spill 文件搬迁至新目录");
+  const migNd = fs.readFileSync(path.join(migNew, "journal.ndjson"), "utf8").trim();
+  assert(migNd.split("\n").length === 1 && JSON.parse(migNd).key === "pre:legacy", "旧格式条目已转写为 ndjson");
+  fs.rmSync(migBase, { recursive: true, force: true });
+
+  // 21b) v3.3:遗留 >7 天整体清空(弃置口径)且显式暴露 spillWiped,不静默
+  const staleBase = fs.mkdtempSync(path.join(os.tmpdir(), "devbridge-stale-"));
+  const staleDir = path.join(staleBase, "plugindata", "devbridge-spill");
+  fs.mkdirSync(staleDir, { recursive: true });
+  fs.writeFileSync(path.join(staleDir, "journal.ndjson"), '{"kind":"kv","key":"old","prev":"v"}\n');
+  fs.writeFileSync(path.join(staleDir, "pre-old-1.bin"), "OLD");
+  const staleTime = new Date(Date.now() - 8 * 24 * 3600 * 1000); // 拨老 8 天
+  fs.utimesSync(path.join(staleDir, "journal.ndjson"), staleTime, staleTime);
+  fs.utimesSync(path.join(staleDir, "pre-old-1.bin"), staleTime, staleTime);
+  const staleScript = [
+    '"use strict";',
+    'const fs = require("fs"), path = require("path");',
+    'const base = process.env.MIG_BASE;',
+    'const tools = {};',
+    'global.utools = {',
+    '  registerTool: (n, f) => { tools[n] = f; },',
+    '  getNativeId: () => "stale",',
+    '  getPath: (n) => path.join(base, n),',
+    '  getPluginLocalDataPath: () => path.join(base, "plugindata"),',
+    '};',
+    'Object.freeze(global.utools);',
+    'require(process.env.BRIDGE_PATH);',
+    'tools.dev_list().then((r) => {',
+    '  console.log("STALE:" + JSON.stringify({ wiped: r.spillWiped === true, pending: r.pendingRestore === undefined, dirGone: !fs.existsSync(path.join(base, "plugindata", "devbridge-spill")) }));',
+    '});',
+  ].join("\n");
+  const stale = spawnSync(process.execPath, ["-e", staleScript], {
+    env: Object.assign({}, process.env, { MIG_BASE: staleBase, BRIDGE_PATH: path.join(__dirname, "..", "preload", "index.js") }),
+    encoding: "utf8", timeout: 30000,
+  });
+  let staleOut = null;
+  try { staleOut = JSON.parse((stale.stdout || "").match(/STALE:(\{.*\})/)[1]); } catch (_) {}
+  assert(stale.status === 0 && staleOut && staleOut.wiped === true && staleOut.pending === true && staleOut.dirGone === true,
+    "8 天遗留被整体清空且 dev_list 显式返回 spillWiped(输出: " + (stale.stdout || "") + (stale.stderr || "") + ")");
+  fs.rmSync(staleBase, { recursive: true, force: true });
+
+  // 22) v3.3 性能回归:1500 次 4KB kv 写——旧全量落盘实现实测 2746ms、新增量 append 390ms,阈值 1500ms 有鉴别力
+  r = await tools.dev_call({ name: "demo.perfKvWrites", args: [1500] });
+  assert(r.ok && r.result === 1500, "perfKvWrites(1500) 执行完成");
+  assert(r.durationMs < 1500, "1500 次 kv 写入 dev_call 耗时 " + r.durationMs + "ms < 1500ms(旧实现 ~2746ms 会红,防落盘退化)");
+  r = await tools.dev_cleanup();
+  assert(r.ok && !kv.has("_dev_:perf-1499"), "性能载荷写入已还原");
 
   console.log(process.exitCode ? "\n== SELFTEST FAILED ==" : "\n== SELFTEST ALL PASS ==");
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exitCode = 1; });

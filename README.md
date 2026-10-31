@@ -71,7 +71,7 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
   | 默认拒绝 | child_process/worker_threads/cluster/http(s)/http2/net/dgram/tls/dns/inspector/vm/v8/repl/readline/**electron** 及未列入白名单的一切 | **懒拒绝**:import 不炸(事件注册族方法 noop+录制,可链式),真正调用时抛 `DENIED_MODULE`;`allowHostModules:true` 或 `["electron"]` 白名单放行 |
 - **fetch 默认拦截**(rejected Promise,code=DENIED_FETCH);沙箱已补齐 URL/TextEncoder/AbortController 等 web 全局
 - 已知分歧(可接受):denied 模块上 `typeof m.get === "function"` 为 true、常量属性访问会得到函数;`.node` 原生模块透传绕过门控
-- **db/dbStorage/dbCryptoStorage 真实执行但记写日志**;**fs 写操作真实执行 + WAL 写日志**(前态先落盘再执行):`dev_cleanup` 按前态还原文件内容/删除新建/恢复 rename;上限:单文件 8MB、目录快照 500 文件、spill 总量 64MB——**破坏性操作(unlink/rm/rename/truncate 等)前态超限默认直接拒绝**(DENIED_FS_UNTRACKED),写类超限放行但 `untracked` 标记不还原;journal 跨 uTools 重启持久化(临时目录 spill,系统清理会失去还原依据,`truncated:true` 会明示);还原失败条目保留可重试(retryable;注意重试可能**过度还原**——配对条目已执行完毕,必要时用 dropAll 或手工 db.remove 处置)
+- **db/dbStorage/dbCryptoStorage 真实执行但记写日志**;**fs 写操作真实执行 + WAL 写日志**(前态先落盘再执行):`dev_cleanup` 按前态还原文件内容/删除新建/恢复 rename;上限:单文件 8MB、目录快照 500 文件、spill 总量 64MB——**破坏性操作(unlink/rm/rename/truncate 等)前态超限默认直接拒绝**(DENIED_FS_UNTRACKED),写类超限放行但 `untracked` 标记不还原;journal 跨 uTools 重启持久化(v3.3 起落 **`getPluginLocalDataPath()/devbridge-spill/`**、NDJSON 每行一条增量追加;旧系统临时目录遗留启动时自动迁移,遗留 >7 天视为弃置整体清空,`truncated:true` 会明示);还原失败条目保留可重试(retryable;注意重试可能**过度还原**——配对条目已执行完毕,必要时用 dropAll 或手工 db.remove 处置)
 - **bulkDocs 新建的文档在回滚时会被删除**(与 put 一致):逆序回放会先执行更晚 remove 条目的还原(复活文档),再由 bulkDocs/put 的无前态回滚删除——两动作配对,孤儿不会残留(2026-09-16 airss 实测缺陷已修,回归用例见 selftest 5c)
 - `dev_cleanup {dropAll:true}`:**跳过回放**直接清空写日志(先杀目标定时器),现场保持现状。仅在已人工核对终态符合预期时使用(如实测后确认终态、清除历史遗留孤儿文档);与 force 同传时 dropAll 优先,以响应 `dropped:true` 判定生效
 - 还原模型假设 journal 记录的操作之间无沙箱外并发写:若同一 utools.db 还有**其他进程在写**(如插件本体同时也在 uTools 里运行),cleanup 可能误删/误还原它的写入;测试期间避免目标插件的正式实例并行运行
@@ -96,3 +96,4 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 | MCP 客户端把 dev_load 的新参数(如 allowHostModules)滤掉 | 会话缓存的工具 schema 落后于 plugin.json;用 scripts/gw-call.js 直连网关调用(自动读本机 key、解析工具全名:8.0 为 `utools_plugin_<id>_<名>` 下划线,旧版 `utools.<id>.<名>` 点分隔,全名/裸名都收) |
 | 网关报 Tool not found(旧脚本写死 `utools.<id>.<名>`) | uTools 8.0 把网关工具名改为 `utools_plugin_<id>_<名>`(下划线);直连脚本一律经 tools/list 动态探测前缀(gw-call.js / rt-run.js / final-restore.js 已内置) |
 | 沙箱定时器不触发(真机已观察到) | timer.schedule/timer.fire 已全程入 dev_calls_log;若 schedule 有而 fire 无,说明宿主挂起该渲染进程的定时器队列——目标代码不要依赖跨 dev_call 的延迟回调,改同步或轮询 |
+| 升级 0.3.3 后旧 spill 遗留 | 启动自动迁移:旧 `getPath("temp")/devbridge-journal/` 整体并入新 `getPluginLocalDataPath()/devbridge-spill/`(旧 journal.json 兼容回读后转 journal.ndjson);遗留 >7 天视为弃置会话整体清空 |

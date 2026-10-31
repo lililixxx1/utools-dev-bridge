@@ -22,6 +22,7 @@ window.demo = {
   hasApi: (k) => k in utools,
   apiKeys: () => Object.keys(utools),
   save: (k, v) => ut().dbStorage.setItem(k, v),
+  perfKvWrites: (n) => { const v = "x".repeat(4096); for (let i = 0; i < n; i++) ut().dbStorage.setItem("_dev_:perf-" + i, v); return n; }, // v3.3 性能回归载荷
   saveDoc: (id) => ut().db.put({ _id: id, hello: 1 }),
   removeDoc: (id) => ut().db.remove(id),
   bulkCreate: (ids) => ut().db.bulkDocs(ids.map((id) => ({ _id: id, src: "bulk" }))),

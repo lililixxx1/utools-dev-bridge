@@ -10,6 +10,9 @@
  *      破坏性 utools API 默认 stub;Node 内置模块白名单门控(默认拒绝,防意外非安全边界);
  *      fs 写副作用 WAL 写日志(前态先落盘再执行,可还原);
  *      db/dbStorage/dbCryptoStorage/fs 写前抓前态,journal 持久化,重启后仍可还原;
+ *      v3.3 性能:journal 落盘改 NDJSON 增量追加(常规入账 O(条目),不再全量重写;截断/驱逐/回滚
+ *      才全量重写);环形缓冲均摊 O(1);spill 迁 getPluginLocalDataPath()/devbridge-spill
+ *      (旧 temp 目录启动自动迁移,遗留 >7 天整体清空,旧 journal.json 兼容回读后转 ndjson);
  *      一切同步执行(模块顶层/被调函数)均经 runInContext({timeout}),死循环不挂宿主;
  *      timers/microtask 回调 try/catch 录制,目标异步异常不冒宿主。
  *
@@ -121,16 +124,25 @@ const FS_DIR_FILES_CAP = 500;             // 单次目录快照 500 文件
 const FS_SPILL_CAP = 64 * 1024 * 1024;    // spill 总量 64MB,超限丢最旧并 truncated 标记
 
 // ---------- 环形缓冲与写日志 ----------
-const ringConsole = [];
-const ringCalls = [];
+// v3.3 性能:环形改均摊 O(1)——越界槽置 undefined 释放引用 + start 前移,每 RING_MAX 次 push 才物理压缩一次
+// (旧版环满后每次 push 都 splice O(RING_MAX),高频调用/定时器刷屏时累积开销)
+const ringConsole = { buf: [], start: 0 };
+const ringCalls = { buf: [], start: 0 };
 const journal = []; // 数据副作用还原日志,不受环形截断(审核 G5)
 let consoleSeq = 0;
 let callsSeq = 0;
 
-function pushRing(arr, entry) {
-  arr.push(entry);
-  if (arr.length > RING_MAX) arr.splice(0, arr.length - RING_MAX);
+function pushRing(ring, entry) {
+  ring.buf.push(entry);
+  if (ring.buf.length - ring.start > RING_MAX) {
+    ring.buf[ring.start] = undefined; // 释放滑出条目的引用,防内存滞留
+    ring.start++;
+    if (ring.start >= RING_MAX) { ring.buf.splice(0, ring.start); ring.start = 0; } // 物理压缩,均摊 O(1)
+  }
 }
+
+// 活窗口快照(读取方为低频 dev_* 工具,复制成本可忽略)
+function ringItems(ring) { return ring.buf.slice(ring.start); }
 
 function err(code, message) {
   const e = new Error(message);
@@ -510,6 +522,14 @@ function killTimers(gen) {
 
 // ---------- denied 模块懒拒绝代理(v3 B1:空白载体+单例缓存;事件族 noop 可链式;任意深度递归) ----------
 const deniedModuleCache = new Map();
+// v3.3 性能:denied 子节点也缓存——同路径 identity 稳定,免目标遍历/链式访问时每次 get 新建代理。
+// 有上限:目标可动态生成任意属性路径(m["a"+i]),超限后退回新建(可 GC),防缓存无界驻留
+const deniedNodeCache = new Map();
+const DENIED_NODE_CACHE_MAX = 500;
+function cacheDeniedNode(api, proxy) {
+  if (deniedNodeCache.size < DENIED_NODE_CACHE_MAX) deniedNodeCache.set(api, proxy);
+  return proxy;
+}
 
 function deniedMsg(api) {
   return err("DENIED_MODULE", "[dev-bridge] 模块行为已拦截(" + api + ");dev_load 传 allowHostModules:true 或白名单数组放行");
@@ -517,11 +537,12 @@ function deniedMsg(api) {
 
 // 函数型 denied 节点:调用即抛 DENIED_MODULE;属性访问继续递归 denied(electron.ipcRenderer.on 这类多级链不炸)
 function makeDeniedFn(api) {
+  if (deniedNodeCache.has(api)) return deniedNodeCache.get(api);
   const fn = function (...args) {
     recordCall(api + "()", args, undefined, null, true, true);
     throw deniedMsg(api);
   };
-  return new Proxy(fn, {
+  const proxy = new Proxy(fn, {
     get(_, prop) {
       if (typeof prop === "symbol") return undefined;
       const sub = api + "." + String(prop);
@@ -529,10 +550,12 @@ function makeDeniedFn(api) {
       return EVENT_NOOP_PROPS.has(String(prop)) ? makeDeniedChainNoop(sub) : makeDeniedFn(sub);
     },
   });
+  return cacheDeniedNode(api, proxy);
 }
 
 // 事件注册族节点:noop+录制,返回自身代理可链式(x.on(a).on(b) 不炸)
 function makeDeniedChainNoop(api) {
+  if (deniedNodeCache.has(api)) return deniedNodeCache.get(api);
   const f = function () { recordCall(api + "()", [], undefined, null, true, true); return proxy; };
   const proxy = new Proxy(f, {
     get(_, prop) {
@@ -542,7 +565,7 @@ function makeDeniedChainNoop(api) {
       return EVENT_NOOP_PROPS.has(String(prop)) ? makeDeniedChainNoop(sub) : makeDeniedFn(sub);
     },
   });
-  return proxy;
+  return cacheDeniedNode(api, proxy);
 }
 
 function makeDeniedModule(name) {
@@ -560,27 +583,57 @@ function makeDeniedModule(name) {
   return proxy;
 }
 
-// ---------- fs 写日志(v3 决策1:真实写 + WAL 前态落盘,cleanup 还原;B2/M3) ----------
+// ---------- fs 写日志(v3 决策1:真实写 + WAL 前态落盘,cleanup 还原;B2/M3;v3.3 迁插件数据目录) ----------
 let spillSeq = 0;
 let spillBytes = 0;
 let journalTruncated = false;
 let PENDING_RESTORE = 0;
+let spillWiped = false; // v3.3:启动过期清理曾整体清空 spill(弃置判定),dev_load/dev_list 显式暴露不静默
 let _journalDir = null;
+let _journalDirReady = false; // mkdir 已建标志:置位后跳过 mkdirSync,免每次写付同步 syscall(v3.3 性能)
+const JOURNAL_FILE = "journal.ndjson";          // v3.3:NDJSON 每行一条,增量追加落盘
+const JOURNAL_LEGACY_FILE = "journal.json";     // ≤v3.2 旧格式(JSON 数组),仅启动兼容回读
+const SPILL_STALE_MS = 7 * 24 * 3600 * 1000;    // v3.3:遗留 >7 天视为弃置会话,启动整体清空
+
 function journalDir() {
   if (_journalDir) return _journalDir;
   let base;
-  try { const t = REAL.getPath && REAL.getPath("temp"); if (t && typeof t === "string") base = t; } catch (_) {}
+  // v3.3:依据官方 builder 规范《数据存储》,跨重启持久数据应放插件本地数据目录
+  // (系统 temp 会被清理导致 journal 永久悬挂、只能 force 出口;该目录插件卸载都不自动删)
+  try { const d = REAL.getPluginLocalDataPath && REAL.getPluginLocalDataPath(); if (d && typeof d === "string") base = d; } catch (_) {}
+  if (!base) { try { const t = REAL.getPath && REAL.getPath("temp"); if (t && typeof t === "string") base = t; } catch (_) {} }
   if (!base) base = os.tmpdir();
-  _journalDir = path.join(base, "devbridge-journal");
+  _journalDir = path.join(base, "devbridge-spill");
   return _journalDir;
 }
+
+// ≤v3.2 旧 spill 目录(getPath("temp")/devbridge-journal),仅作启动迁移源
+function legacyJournalDir() {
+  try { const t = REAL.getPath && REAL.getPath("temp"); if (t && typeof t === "string") return path.join(t, "devbridge-journal"); } catch (_) {}
+  return path.join(os.tmpdir(), "devbridge-journal");
+}
+
+function ensureJournalDir() {
+  if (_journalDirReady) return;
+  fs.mkdirSync(journalDir(), { recursive: true });
+  _journalDirReady = true;
+}
+
 function spillPath(file) { return path.join(journalDir(), file); }
 
-// spill 写入必须用桥自身 require 的 fs,绝不经沙箱 shim(否则递归)
+// spill 写入必须用桥自身 require 的 fs,绝不经沙箱 shim(否则递归)。
+// 外部删除目录自愈(审核 M3):ENOENT 时重置 mkdir 标志重建后重试一次,否则破坏性 fs 操作会被误报 DENIED_FS_UNTRACKED
 function writeSpillBuffer(buf) {
-  fs.mkdirSync(journalDir(), { recursive: true });
   const file = "pre-" + Date.now() + "-" + (++spillSeq) + ".bin";
-  fs.writeFileSync(spillPath(file), buf);
+  try {
+    ensureJournalDir();
+    fs.writeFileSync(spillPath(file), buf);
+  } catch (first) {
+    if (!first || first.code !== "ENOENT") throw first;
+    _journalDirReady = false;
+    ensureJournalDir();
+    fs.writeFileSync(spillPath(file), buf);
+  }
   spillBytes += buf.length;
   return { file, size: buf.length };
 }
@@ -594,32 +647,125 @@ function dropSpills(entry) {
 
 // spill 总量超 64MB:丢最旧并标记 spillLost,cleanup 会以失败形式暴露(truncated)
 function evictSpillOverCap() {
+  let evicted = false;
   while (spillBytes > FS_SPILL_CAP) {
     const e = journal.find((j) => j.spills && j.spills.length && !j.spillLost);
     if (!e) break;
     dropSpills(e);
     e.spillLost = true;
     journalTruncated = true;
+    evicted = true;
   }
+  return evicted;
 }
 
-// journal 元数据原子落盘(db/kv/fs 条目共用;内容永远在独立 spill 文件)
-function persistJournalMeta() {
+// v3.3 性能:journal 元数据改 NDJSON 增量追加——常规入账 O(条目大小) 一行 appendFileSync,
+// 消除旧版每次全量 JSON.stringify(journal)+rename 的 O(N) 同步写(会话内 O(N²),阻塞宿主渲染进程)。
+// 条目结构与旧 JSON 数组元素完全同构,仅容器格式变化;内容永远在独立 spill 文件。
+// 失败自愈(审核 M2):单条 append 失败即磁盘永久缺行,改 fallback 全量重写补齐;重写也失败置 truncated 暴露。
+// 外部删除目录自愈(审核 M3):写失败若是目录丢失(ENOENT),重置 mkdir 标志重建后重试一次。
+function appendJournalEntry(e) {
+  const line = JSON.stringify(e) + "\n";
   try {
-    const dir = journalDir();
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(spillPath("journal.json.tmp"), JSON.stringify(journal));
-    fs.renameSync(spillPath("journal.json.tmp"), spillPath("journal.json"));
+    ensureJournalDir();
+    fs.appendFileSync(spillPath(JOURNAL_FILE), line);
+    return;
+  } catch (first) {
+    if (first && first.code === "ENOENT") {
+      _journalDirReady = false;
+      try { ensureJournalDir(); fs.appendFileSync(spillPath(JOURNAL_FILE), line); return; } catch (_) {}
+    }
+  }
+  if (!rewriteJournalFile()) journalTruncated = true; // 追加与重写双失败:显式标记,回灌/cleanup 可见
+}
+
+// 全量重写 ndjson(保留 tmp+rename 原子性),仅低频场景:截断/驱逐/回滚/旧格式转换;返回是否成功
+function rewriteJournalFile() {
+  try {
+    ensureJournalDir();
+    const parts = [];
+    for (const e of journal) parts.push(JSON.stringify(e));
+    const tmp = spillPath(JOURNAL_FILE + ".tmp");
+    fs.writeFileSync(tmp, parts.length ? parts.join("\n") + "\n" : "");
+    fs.renameSync(tmp, spillPath(JOURNAL_FILE));
+    return true;
+  } catch (_) { return false; }
+}
+
+// v3.3 启动一次性迁移:旧 temp 目录的 spill/journal 文件整体搬入新目录(同盘 rename,跨盘 copy+unlink),
+// 防旧条目回灌后 spillPath 解析到新目录找不到前态文件(spillLost 错位)
+function migrateLegacySpill() {
+  try {
+    const from = legacyJournalDir(), to = journalDir();
+    if (from === to || !fs.existsSync(from)) return;
+    ensureJournalDir();
+    for (const f of fs.readdirSync(from)) {
+      if (!/^pre-.*\.bin$/.test(f) && f !== JOURNAL_LEGACY_FILE && f !== JOURNAL_LEGACY_FILE + ".tmp"
+        && f !== JOURNAL_FILE && f !== JOURNAL_FILE + ".tmp") continue;
+      const src = path.join(from, f), dst = path.join(to, f);
+      if (fs.existsSync(dst)) { try { fs.unlinkSync(src); } catch (_) {} continue; } // 新目录已有同名(保守去重,不该发生)
+      try { fs.renameSync(src, dst); }
+      catch (_) {
+        // 跨盘 fallback:copy 后 size 比对,不符(中断半截)则弃 dst 保 src 待下次重试,防静默错还原
+        try {
+          fs.copyFileSync(src, dst);
+          if (fs.statSync(src).size !== fs.statSync(dst).size) { try { fs.unlinkSync(dst); } catch (_) {} continue; }
+          fs.unlinkSync(src);
+        } catch (_) { continue; }
+      }
+    }
+    try { fs.rmdirSync(from); } catch (_) {} // 搬空才删得掉;有残留下次启动再试
   } catch (_) {}
 }
 
-// 桥启动时回灌:上次会话未还原的条目仍可 dev_cleanup(决策5)
+// v3.3 过期清理:目录内【全部】文件 mtime 距今 >7 天 → 视为弃置会话整体清空(审核 M4:混合龄目录
+// ——跨会话累计,新条目完全可还原——不得因个别老 spill 被连带全清;ndjson 每次入账都会刷新 mtime,
+// 全部过期即整个目录闲置超时)。清空置 wiped 标记,dev_load/dev_list warnings 显式可见(不静默)。
+function cleanStaleSpill() {
+  try {
+    const dir = journalDir();
+    if (!fs.existsSync(dir)) return false;
+    const now = Date.now();
+    let files = 0, stale = 0;
+    for (const f of fs.readdirSync(dir)) {
+      files++;
+      try { if (now - fs.statSync(path.join(dir, f)).mtimeMs > SPILL_STALE_MS) stale++; } catch (_) {}
+    }
+    if (!files || stale < files) return false;
+    for (const f of fs.readdirSync(dir)) { try { fs.unlinkSync(path.join(dir, f)); } catch (_) {} }
+    try { fs.rmdirSync(dir); } catch (_) {}
+    spillBytes = 0;
+    _journalDirReady = false; // 目录已删,与 cleanupSpillDir 保持同一口径
+    spillWiped = true;
+    return true;
+  } catch (_) { return false; }
+}
+
+// 桥启动时回灌:上次会话未还原的条目仍可 dev_cleanup(决策5);v3.3 先迁旧目录、过期清空,再 NDJSON 逐行容错回灌
 function restoreJournalMeta() {
   try {
-    const fin = spillPath("journal.json");
-    if (!fs.existsSync(fin)) return;
-    const entries = JSON.parse(fs.readFileSync(fin, "utf8"));
-    if (!Array.isArray(entries)) return;
+    migrateLegacySpill();
+    if (cleanStaleSpill()) return; // 弃置会话已整体清空,无条目可回灌
+    const entries = [];
+    const fin = spillPath(JOURNAL_FILE);
+    if (fs.existsSync(fin)) {
+      // NDJSON 逐行回灌:单行损坏只丢该行(标 truncated),其余仍可还原——比旧版整文件 parse 失败全丢更强
+      for (const line of fs.readFileSync(fin, "utf8").split("\n")) {
+        if (!line) continue;
+        try {
+          const e = JSON.parse(line);
+          if (e && typeof e === "object") entries.push(e); else journalTruncated = true;
+        } catch (_) { journalTruncated = true; }
+      }
+    } else {
+      // 迁移兼容:无 ndjson 时回读旧格式 JSON 数组(≤v3.2 遗留,含刚从旧目录搬来者)
+      const legacy = spillPath(JOURNAL_LEGACY_FILE);
+      if (fs.existsSync(legacy)) {
+        try { const arr = JSON.parse(fs.readFileSync(legacy, "utf8")); if (Array.isArray(arr)) entries.push(...arr); } catch (_) {}
+      }
+    }
+    let converted = false;
+    if (!fs.existsSync(fin) && entries.length) converted = true; // 旧格式回灌后需转写为 ndjson
     for (const e of entries) {
       for (const s of e.spills || []) {
         try { spillBytes += fs.statSync(spillPath(s.file)).size; }
@@ -627,19 +773,26 @@ function restoreJournalMeta() {
       }
       journal.push(e);
     }
+    if (converted && rewriteJournalFile()) {
+      // 转写成功才删旧格式文件(审核 M1:rewrite 失败须保留 journal.json 供下次重试,否则整会话元数据静默丢失)
+      try { fs.unlinkSync(spillPath(JOURNAL_LEGACY_FILE)); } catch (_) {}
+    }
     PENDING_RESTORE = journal.length;
   } catch (_) {}
 }
 
 function pushJournalEntry(e) {
+  let dirtyOld = false; // 是否动了内存中已有条目(截断丢弃/驱逐改 spillLost)——文件里旧行已失真,需全量重写
   while (journal.length >= JOURNAL_MAX) {
     const old = journal.shift();
     dropSpills(old);
     journalTruncated = true;
+    dirtyOld = true;
   }
   journal.push(e);
-  evictSpillOverCap();
-  persistJournalMeta();
+  if (evictSpillOverCap()) dirtyOld = true;
+  if (dirtyOld) { if (!rewriteJournalFile()) journalTruncated = true; }
+  else appendJournalEntry(e);
 }
 
 // 单文件/符号链接前态快照;超 8MB → over:true(调用方按 M3 分级处置)
@@ -791,7 +944,7 @@ function makeFsWrapFn(name, realFn, gen) {
       const i = journal.indexOf(entry);
       if (i >= 0) journal.splice(i, 1);
       dropSpills(entry);
-      persistJournalMeta();
+      rewriteJournalFile(); // v3.3:内存移除后全量重写(低频路径)
     };
     try {
       const res = realFn.apply(fs, args);
@@ -894,11 +1047,13 @@ function cleanupSpillDir() {
   try {
     const dir = journalDir();
     for (const f of fs.readdirSync(dir)) {
-      if (/^pre-.*\.bin$/.test(f) || f === "journal.json" || f === "journal.json.tmp") fs.unlinkSync(path.join(dir, f));
+      if (/^pre-.*\.bin$/.test(f) || f === JOURNAL_FILE || f === JOURNAL_FILE + ".tmp"
+        || f === JOURNAL_LEGACY_FILE || f === JOURNAL_LEGACY_FILE + ".tmp") fs.unlinkSync(path.join(dir, f));
     }
     fs.rmdirSync(dir);
   } catch (_) {}
   spillBytes = 0;
+  _journalDirReady = false; // 目录已删:重置 mkdir 标志,下次写前重建(否则 writeSpillBuffer ENOENT→破坏性操作被误拒)
 }
 
 // ---------- 极简 DOM stub(P2):查询恒 null,创建/监听惰性记录;真实 DOM 行为不承诺 ----------
@@ -1228,13 +1383,14 @@ function devLoad(cfg) {
   persistLast({ path: cfg.path, mode: cfg.mode || "plugin", allowSideEffects: !!cfg.allowSideEffects, allowHostModules: cfg.allowHostModules === undefined ? false : cfg.allowHostModules, timeoutMs: cfg.timeoutMs });
   // M7:汇总装载期触发的模块拦截,agent 不必等莫名其妙的 throw 才知道门控生效
   const deniedMods = new Set();
-  for (const e of ringCalls) {
+  for (const e of ringItems(ringCalls)) {
     if (e.seq > callsBefore && e.denied && String(e.api).indexOf("require:") === 0) {
       deniedMods.add(String(e.api).slice(8).split(".")[0]);
     }
   }
   if (deniedMods.size) gen.warnings.push("装载期模块拦截: " + Array.from(deniedMods).join(", ") + "(dev_load 传 allowHostModules 放行)");
   if (PENDING_RESTORE > 0) gen.warnings.push("上次会话遗留 " + PENDING_RESTORE + " 条未还原写日志;建议先 dev_cleanup");
+  if (spillWiped) gen.warnings.push("上次遗留 spill 已超 7 天,启动时按弃置会话整体清空(如需保留现场请缩短测试与还原间隔)");
   return {
     ok: true, entry: gen.entry, mode: gen.mode, allowSideEffects: gen.allowSideEffects,
     allowHostModules: gen.allowHostModules === undefined ? false : gen.allowHostModules,
@@ -1372,6 +1528,7 @@ function devList() {
   if (!CURRENT_GEN) {
     const out0 = { ok: true, loaded: false, hint: "尚未加载;调用 dev_load {path}" };
     if (PENDING_RESTORE > 0) { out0.pendingRestore = PENDING_RESTORE; out0.hint += ";上次会话遗留 " + PENDING_RESTORE + " 条未还原写日志,建议先 dev_cleanup"; }
+    if (spillWiped) out0.spillWiped = true; // 未加载分支同样暴露弃置清空(与已加载分支同口径)
     return out0;
   }
   const g = CURRENT_GEN;
@@ -1383,16 +1540,18 @@ function devList() {
     warnings: g.warnings, reloaded: meta.reloaded || undefined,
     pendingRestore: PENDING_RESTORE > 0 ? PENDING_RESTORE : undefined,
     untrackedJournal: untrackedCount > 0 ? untrackedCount : undefined, // journal 中不可还原的 fs 写条目数
+    spillWiped: spillWiped || undefined, // 本次启动曾按 7 天弃置口径整体清空遗留 spill(显式不静默)
   };
 }
 
-function readRing(arr, since, clear) {
-  const idx = arr.findIndex((e) => e.seq > since);
-  const expired = since > 0 && arr.length > 0 && arr[0].seq > since + 1;
-  const entries = idx >= 0 ? arr.slice(idx) : [];
+function readRing(ring, since, clear) {
+  const live = ring.buf.slice(ring.start);
+  const idx = live.findIndex((e) => e.seq > since);
+  const expired = since > 0 && live.length > 0 && live[0].seq > since + 1;
+  const entries = idx >= 0 ? live.slice(idx) : [];
   const out = { ok: true, entries, count: entries.length, to: entries.length ? entries[entries.length - 1].seq : since };
   if (expired) { out.expired = true; out.hint = "since 已被环形覆盖,本次为当前全量;下次请用返回的 to 做游标"; }
-  if (clear) arr.length = 0;
+  if (clear) { ring.buf.length = 0; ring.start = 0; }
   return out;
 }
 
@@ -1504,7 +1663,7 @@ function devCleanup(cfg) {
     cleanupSpillDir();
     PENDING_RESTORE = 0;
   } else {
-    persistJournalMeta();
+    rewriteJournalFile(); // v3.3:残留可重试条目全量重写为 ndjson(低频路径)
   }
   killTimers(CURRENT_GEN);
   const out = {
