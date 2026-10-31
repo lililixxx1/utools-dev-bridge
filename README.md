@@ -20,6 +20,7 @@
 | `scripts/gw-call.js` | 网关直连兜底(schema 缓存 / 30s 掐断时用;仅回环,key 不打印) |
 | `scripts/gsm-harness.js` | github-stars-manager-for-utools 存储层真机 harness(经桥跑的业务插件断言示例) |
 | `scripts/final-restore.js` | 单进程背靠背终态还原范式(airss 孤儿清除实例) |
+| `skills/` | 配套 AI 技能公开分发版:utools-dev-bridge(桥驾驶手册)/ utools-plugin-dev(插件开发 API 参考;公开版不含 builder 镜像,见 skills/README.md) |
 | `AGENTS.md` / `PLAN.md` | 工作须知 / v3 设计与 v3.1 热修史 |
 
 ## 一次性安装(唯一人工步骤)
@@ -29,7 +30,7 @@
 3. agent 侧:ZCode `~/.zcode/cli/config.json` 的 `mcp.servers.utools` 指向 `http://127.0.0.1:3501/mcp`(已配好),key 用 uTools 设置 → AI Agent 连接里复制的值
 
 ### 保活入口(已内置)
-uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态与资源指引(本仓库地址、配套 AI 技能 utools-dev-bridge / utools-plugin-dev 的托管位置),不是功能 UI,纯静态零脚本。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
+uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态与资源指引(本仓库地址与 `skills/` 下两个配套技能入口,链接均指向本仓库),不是功能 UI,纯静态零脚本。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
 
 ## 本地自测(无需 uTools)
 

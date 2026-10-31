@@ -12,6 +12,7 @@ uTools 插件开发测试桥:**工具面纯 AI 驱动,无功能 UI**(plugin.json
 - `scripts/fixtures/` — demo-plugin / loop-plugin 假目标。
 - `scripts/gw-call.js` — 网关直连兜底(绕过 MCP 客户端 schema 缓存与 30s 掐断;仅回环,key 不打印)。
 - `scripts/gsm-harness.js` / `scripts/final-restore.js` — 经桥跑的业务插件 harness 示例 / 单进程背靠背还原范式(见 gotchas)。
+- `skills/` — 配套 AI 技能公开分发版(utools-dev-bridge 驾驶手册 / utools-plugin-dev API 参考);从维护者本机技能目录脱敏而来,**公开版不含 builder 镜像与同步脚本**,本机技能目录是维护源——改本机技能后记得同步到这里。
 - `README.md` — 工作流、副作用与安全约定(必读)、排障表;`PLAN.md` — v3 设计与 v3.1 热修史。改桥行为前两份都要对照。
 
 ## 命令
