@@ -1,44 +1,26 @@
 # dev-bridge — uTools 插件开发测试桥
 
-让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + 一页保活入口,见下文)。
+让 AI agent(经 uTools MCP)自主加载、调用、调试任意 uTools 插件的 preload 逻辑,消除"开发者插件+人肉测试"循环。**工具面纯 AI 驱动,无功能 UI**(plugin.json:logo/preload/tools + 一页保活入口)。
 
-> uTools 8.0 公测适配版(v0.3.2):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具把 `features` 标为必填、工具 `description` 限 ≤500 字符,均已适配。
+六个工具:`dev_load`(沙箱加载目标插件)→ `dev_call`(调导出函数/生命周期/`__tool:<名>`)→ `dev_console` / `dev_calls_log`(看现场)→ `dev_list`(状态)→ `dev_cleanup`(还原 db/fs 写副作用)。配套两个 AI 技能(见 [`skills/`](skills/README.md)):桥的实测驾驶手册 + uTools 插件开发 API 参考。
 
-> 仓库:https://github.com/lililixxx1/utools-dev-bridge
+## 快速开始
 
-## 目录结构
+### 给 agent(推荐)
 
-| 路径 | 说明 |
-|---|---|
-| `preload/index.js` | 桥的全部实现(单文件 CommonJS;文件头注释 = 机制总览 + 错误码契约,改契约先改它) |
-| `plugin.json` | 插件清单 + 六个 dev_* 工具的 description/inputSchema |
-| `fallback-ui.html` / `logo.png` | 保活入口页(plugin.json 的 main 指向它)/ 图标 |
-| `scripts/selftest.js` | 纯 Node 自测(mock utools 后 require 桥,验证全链路;改 preload 后必跑) |
-| `scripts/rt-check/` | 真机回归目标插件(`runAll(filter?)` / `probeHost()`) |
-| `scripts/rt-run.js` | 真机回归一键驱动(单进程背靠背:前缀探测 → dev_load → runAll/probeHost/v80 用例 → `__tool:` 端到端 → 还原核对) |
-| `scripts/fixtures/` | demo-plugin / loop-plugin 假目标插件 |
-| `scripts/gw-call.js` | 网关直连兜底(schema 缓存 / 30s 掐断时用;仅回环,key 不打印) |
-| `scripts/gsm-harness.js` | github-stars-manager-for-utools 存储层真机 harness(经桥跑的业务插件断言示例) |
-| `scripts/final-restore.js` | 单进程背靠背终态还原范式(airss 孤儿清除实例) |
-| `skills/` | 配套 AI 技能公开分发版:utools-dev-bridge(桥驾驶手册)/ utools-plugin-dev(插件开发 API 参考;公开版不含 builder 镜像,见 skills/README.md) |
-| `AGENTS.md` / `PLAN.md` | 工作须知 / v3 设计与 v3.1 热修史 |
+把下面这句原样发给你的 AI agent,它会自己完成技能装配:
 
-## 一次性安装(唯一人工步骤)
+> 请安装 uTools 开发桥配套技能:clone https://github.com/lililixxx1/utools-dev-bridge ,把 skills/ 下 utools-dev-bridge(插件实测手册)与 utools-plugin-dev(API 参考)装进你的技能目录;此后实测/调试 uTools 插件,用 uTools MCP 的 dev_* 工具按手册驱动。
+
+(uTools 插件里的「开发桥」保活页有同款一键复制。)
+
+### 人工安装(唯一人工步骤)
 
 1. uTools → 开发者工具(开发者插件)→ 加载本目录(`utools-dev-bridge/`,选含 plugin.json 的目录)
-2. **重启 uTools**(不打开任何插件,tools/list 里应出现 `dev_*` 六工具——8.0 起 MCP 服务支持工具调用时按需拉起插件)
-3. agent 侧:ZCode `~/.zcode/cli/config.json` 的 `mcp.servers.utools` 指向 `http://127.0.0.1:3501/mcp`(已配好),key 用 uTools 设置 → AI Agent 连接里复制的值
+2. **重启 uTools**(不打开任何插件,agent 的 tools/list 里应出现 `dev_*` 六工具——8.0 起 MCP 服务支持工具调用时按需拉起插件)
+3. agent 侧:MCP 服务指向 `http://127.0.0.1:3501/mcp`,鉴权 header `x-mcp-key` 用 uTools 设置 →「AI Agent 连接」里复制的值
 
-### 保活入口(已内置)
-uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态与资源指引(使用方式三步、本仓库地址、`skills/` 下两个配套技能入口、一键复制的 AI 上手指令——复制发给 agent 即自动 clone 本仓库并把技能装进其技能目录),不是功能 UI;除外链跳转与复制两段小脚本(preload 会把真实 utools 挂到 `window.utools`,页面用它调 `shellOpenExternal`/`copyText`)外无任何逻辑。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
-
-## 本地自测(无需 uTools)
-
-```bash
-node scripts/selftest.js   # 在仓库根目录下跑;mock utools 全局,验证桥全链路
-```
-
-改 `preload/index.js` 后必跑;通过再走真机回归(uTools 里装好本插件后,`node scripts/rt-run.js` 一键,或按下节工作流手工调 dev_*)。
+若重启 uTools 后 dev_* 无响应:在 uTools 里打开一次「开发桥」窗口拉起 preload 即可(冷启动回退)。该窗口是 8.0 校验器 `features` 必填要求下的保活入口,仅显示就绪状态与资源指引(使用方式/仓库/技能入口/一键复制的上手指令),不是功能 UI——preload 会把真实 utools 挂到 `window.utools`,页面用它做外链跳转(`shellOpenExternal`)与复制(`copyText`)。
 
 ## agent 工作流(测试循环)
 
@@ -52,7 +34,8 @@ dev_calls_log {since: <游标>}                # 增量取调用流水(utools.*/
 改代码 → 再 dev_load(热重载,services 级生效)→ dev_call ……
 dev_cleanup                                 # 测完还原 db/dbStorage/dbCryptoStorage/fs 写副作用
 ```
-- `dev_call {name:"__enter", args:[{code,type,payload,from}]}` 触发目标注册的 onPluginEnter;同类特殊名:`__out`/`__detach`(onPluginOut/Detach)、`__mainPush`(args=[{code,type,payload}])、`__dbPull`(args=[{docs}])、`__domReady`(触发 document 的 DOMContentLoaded 监听);8.0 新增:`__ready`(onPluginReady,args=[])、`__schedule`(onScheduleTrigger,args=[{code}])
+
+- 生命周期:`dev_call {name:"__enter", args:[{code,type,payload,from}]}` 触发目标注册的 onPluginEnter;同类特殊名:`__out`/`__detach`(onPluginOut/Detach)、`__mainPush`(args=[{code,type,payload}])、`__dbPull`(args=[{docs}])、`__domReady`(触发 document 的 DOMContentLoaded 监听);8.0 新增:`__ready`(onPluginReady,args=[])、`__schedule`(onScheduleTrigger,args=[{code}])
 - 8.0 MCP 工具测试:目标 preload 里 `utools.registerTool(name, handler)` 注册的处理器会被捕获(dev_load/dev_list 返回 tools 清单),`dev_call {name:"__tool:<名>", args:[参数对象]}` 直接调用——自动补仿真 ToolContext(sendProgress 录入流水),不必真开 MCP 会话即可驱动目标的工具逻辑
 - DOM:沙箱有极简 document stub——getElementById/querySelector **恒 null**、createElement/addEventListener 惰性记录;"顶层仅注册回调"的插件可装载,回调内做真实 DOM 的仍不承载
 - 长任务(AI/网络)`timeoutMs` 按需调大(默认 30s)
@@ -76,7 +59,7 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 - **bulkDocs 新建的文档在回滚时会被删除**(与 put 一致):逆序回放会先执行更晚 remove 条目的还原(复活文档),再由 bulkDocs/put 的无前态回滚删除——两动作配对,孤儿不会残留(2026-09-16 airss 实测缺陷已修,回归用例见 selftest 5c)
 - `dev_cleanup {dropAll:true}`:**跳过回放**直接清空写日志(先杀目标定时器),现场保持现状。仅在已人工核对终态符合预期时使用(如实测后确认终态、清除历史遗留孤儿文档);与 force 同传时 dropAll 优先,以响应 `dropped:true` 判定生效
 - 还原模型假设 journal 记录的操作之间无沙箱外并发写:若同一 utools.db 还有**其他进程在写**(如插件本体同时也在 uTools 里运行),cleanup 可能误删/误还原它的写入;测试期间避免目标插件的正式实例并行运行
-- 网关 key 会在 uTools 重登/重置后轮换,403 时去 uTools 设置重新复制并更新 config.json
+- 网关 key 会在 uTools 重登/重置后轮换,403 时去 uTools 设置重新复制并更新 agent 的 MCP 配置
 
 ## 能力边界
 
@@ -85,11 +68,32 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 - 同步死循环受 `timeoutMs` 硬保护(超时→沙箱自动重建);但 **await 之后的同步死循环无法打断**,残余风险自担;目标异步回调内的异常会以 level:"uncaught" 录进 dev_console,不会炸宿主
 - 目标代码读到的是 process 白名单 shim(platform/versions/env 只读拷贝等),`process.exit` 被拦截
 
+## 开发本仓库
+
+```bash
+node scripts/selftest.js                    # 本地自测(mock utools 全链路;改 preload/plugin.json 后必跑)
+node scripts/rt-run.js                      # 真机回归一键(需 uTools 已装本插件;单进程背靠背,含还原核对)
+node scripts/gw-call.js <tool> '<json>'     # 网关直连兜底(schema 缓存/30s 掐断时;仅回环,key 不打印)
+```
+
+| 路径 | 说明 |
+|---|---|
+| `preload/index.js` | 桥的全部实现(单文件 CommonJS;文件头注释 = 机制总览 + 错误码契约,改契约先改它) |
+| `plugin.json` | 插件清单 + 六个 dev_* 工具的 description/inputSchema |
+| `fallback-ui.html` / `logo.png` | 保活入口页(见上文快速开始)/ 图标 |
+| `scripts/selftest.js` / `scripts/rt-run.js` / `scripts/rt-check/` | 本地自测 / 真机一键回归 / 回归用例目标插件 |
+| `scripts/gw-call.js` | 网关直连兜底(自动读本机 key、动态探测 8.0/旧版工具名前缀) |
+| `scripts/fixtures/` / `scripts/gsm-harness.js` / `scripts/final-restore.js` | 假目标插件 / 业务插件 harness 示例 / 单进程背靠背还原范式 |
+| `skills/` | 配套 AI 技能公开分发版:utools-dev-bridge(实测驾驶手册)/ utools-plugin-dev(插件 API 参考;公开版不含 builder 镜像,见 skills/README.md) |
+| `AGENTS.md` / `PLAN.md` | 工作须知 / v3 设计与热修史 |
+
+改 preload 后需在 uTools 开发者工具重载插件(或重启 uTools)才生效。
+
 ## 排障
 
 | 症状 | 处置 |
 |---|---|
-| tools/list 无 dev_* | 冷启动回退(上文);确认开发者插件里已加载且未禁用;**plugin.json 的 inputSchema 避免用 oneOf 等组合构造**(实测 uTools 校验器拒收,导致整个插件加载失败) |
+| tools/list 无 dev_* | 冷启动回退:打开一次「开发桥」窗口拉起 preload;确认开发者插件里已加载且未禁用;**plugin.json 的 inputSchema 避免用 oneOf 等组合构造**(实测 uTools 校验器拒收,导致整个插件加载失败) |
 | dev_call 返回 THROWN | 看 message 里的 stack;dev_console{since:consoleFrom} 取现场 |
 | 沙箱脏(dirty) | 任何一次 dev_* 会自动重建;dev_list 可查 dirty 状态 |
 | 网关 403 | key 轮换,重复制 |
@@ -98,3 +102,14 @@ dev_cleanup                                 # 测完还原 db/dbStorage/dbCrypto
 | 网关报 Tool not found(旧脚本写死 `utools.<id>.<名>`) | uTools 8.0 把网关工具名改为 `utools_plugin_<id>_<名>`(下划线);直连脚本一律经 tools/list 动态探测前缀(gw-call.js / rt-run.js / final-restore.js 已内置) |
 | 沙箱定时器不触发(真机已观察到) | timer.schedule/timer.fire 已全程入 dev_calls_log;若 schedule 有而 fire 无,说明宿主挂起该渲染进程的定时器队列——目标代码不要依赖跨 dev_call 的延迟回调,改同步或轮询 |
 | 升级 0.3.3 后旧 spill 遗留 | 启动自动迁移:旧 `getPath("temp")/devbridge-journal/` 整体并入新 `getPluginLocalDataPath()/devbridge-spill/`(旧 journal.json 兼容回读后转 journal.ndjson);遗留 >7 天视为弃置会话整体清空 |
+
+## 版本与兼容性
+
+当前 **v0.3.3**(uTools 8.0.2 真机回归全绿;运行时 Electron 34 / Node 20)。
+
+- **uTools 8.0 适配**(v0.3.0 起):新增 `__ready`/`__schedule` 生命周期触发、目标 `registerTool` 捕获为 `__tool:<名>` 可调、定时任务 API(requestSchedule/removeSchedule)默认 stub;底座(plugin.json `tools` + 内置 MCP 服务)8.0 已正式化,机制不变。8.0 开发者工具校验:`features` 必填、工具 `description` 非空且 ≤500 字符、inputSchema 禁 oneOf 等组合构造——均已适配。
+- **v0.3.3 性能**:journal 落盘改 NDJSON 增量追加(实测 1500 次 4KB kv 写 2746ms→390ms);spill 迁 `getPluginLocalDataPath()/devbridge-spill/`(temp 遗留自动迁移)。
+
+## 分发口径
+
+`skills/` 是配套技能的公开分发快照(维护源在本机,改本机技能后手动同步);`utools-plugin-dev` 公开版不含 `references/builder/`(官方非公开渠道内容)。技能与本 README 冲突时,以本 README 为准。
