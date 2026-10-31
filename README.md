@@ -29,7 +29,7 @@
 3. agent 侧:ZCode `~/.zcode/cli/config.json` 的 `mcp.servers.utools` 指向 `http://127.0.0.1:3501/mcp`(已配好),key 用 uTools 设置 → AI Agent 连接里复制的值
 
 ### 保活入口(已内置)
-uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态,不是功能 UI。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
+uTools 8.0 开发者工具把 `features` 标为必填(缺失即报"plugin.json features 无效"),plugin.json 已内置 `main`(fallback-ui.html)与 `features`(「开发桥」指令)——该页面只显示就绪状态与资源指引(本仓库地址、配套 AI 技能 utools-dev-bridge / utools-plugin-dev 的托管位置),不是功能 UI,纯静态零脚本。若重启 uTools 后 dev_* 无响应,在 uTools 里打开一次「开发桥」拉起 preload 即可。
 
 ## 本地自测(无需 uTools)
 
