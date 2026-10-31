@@ -569,5 +569,28 @@ for (const [k, v] of Object.entries(pj.tools)) {
   r = await tools.dev_cleanup();
   assert(r.ok && !kv.has("_dev_:perf-1499"), "性能载荷写入已还原");
 
+  // 23) 上次目标自动恢复失效降级(实测缺陷:airss 临时文件被删后,桥重启时 dev_list 被炸出 PATH_NOT_FOUND)
+  //     恢复必须 best-effort:作废 last 记忆、降级为未加载并明示 lastRestoreFailed,只读状态查询不因恢复失败而失败
+  {
+    const bridgePath = path.join(__dirname, "..", "preload", "index.js");
+    const tmpTarget = path.join(os.tmpdir(), "devbridge-st23.js");
+    fs.writeFileSync(tmpTarget, '"use strict";\nmodule.exports = { ping: () => "pong" };\n');
+    const r23a = await tools.dev_load({ path: tmpTarget, mode: "file" });
+    assert(r23a.ok, "23: dev_load mode:file 临时目标成功(last 已持久化)");
+    fs.rmSync(tmpTarget, { force: true }); // 模拟:上次目标文件事后被删除
+    // 模拟桥重启:清 require.cache 重取(CURRENT_GEN/内存 lastConfig 归零,kv 里的 last 仍在)
+    delete require.cache[require.resolve(bridgePath)];
+    require(bridgePath);
+    const tools23 = registered;
+    const dl23 = await tools23.dev_list({});
+    assert(dl23.ok === true && dl23.loaded === false, "23: dev_list 不再因恢复失败而炸(ok=true loaded=false)");
+    assert(typeof dl23.lastRestoreFailed === "string" && dl23.lastRestoreFailed.indexOf("PATH_NOT_FOUND") >= 0,
+      "23: lastRestoreFailed 明示原因(" + dl23.lastRestoreFailed + ")");
+    const lastKeys = [...kv.keys()].filter((k) => k.startsWith("devbridge:") && k.endsWith(":last"));
+    assert(lastKeys.length === 0, "23: 失效 last 记忆已作废(dbStorage removeItem)");
+    const r23b = await tools23.dev_load({ path: fx });
+    assert(r23b.ok, "23: 作废后重新 dev_load 正常目标不受影响");
+  }
+
   console.log(process.exitCode ? "\n== SELFTEST FAILED ==" : "\n== SELFTEST ALL PASS ==");
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exitCode = 1; });

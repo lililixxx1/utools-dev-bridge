@@ -14,7 +14,10 @@
  *      才全量重写);环形缓冲均摊 O(1);spill 迁 getPluginLocalDataPath()/devbridge-spill
  *      (旧 temp 目录启动自动迁移,遗留 >7 天整体清空,旧 journal.json 兼容回读后转 ndjson);
  *      一切同步执行(模块顶层/被调函数)均经 runInContext({timeout}),死循环不挂宿主;
- *      timers/microtask 回调 try/catch 录制,目标异步异常不冒宿主。
+ *      timers/microtask 回调 try/catch 录制,目标异步异常不冒宿主;
+ *      dev_load 配置持久化(dbStorage),桥重启后 dev_list/dev_call 自动恢复上次目标——
+ *      恢复是 best-effort:目标已失效(文件被删等)则作废记忆降级为未加载,
+ *      状态字段 lastRestoreFailed 明示原因,只读查询(dev_list)不因恢复失败而失败。
  *
  * 错误契约:所有工具失败返回 {ok:false, code, message}
  *   PATH_NOT_FOUND / NO_PLUGIN_JSON / NO_PRELOAD / SYNTAX_ERROR / REQUIRE_FAILED
@@ -1364,7 +1367,17 @@ function ensureState(meta) {
   if (CURRENT_GEN && !CURRENT_GEN.dirty) return;
   const cfg = restoreLast();
   if (!cfg) return;
-  const fresh = buildGeneration(cfg);
+  let fresh;
+  try {
+    fresh = buildGeneration(cfg);
+  } catch (e) {
+    // 上次目标自动恢复失败(典型:mode:file 的临时文件已删/插件目录移走)。恢复是 best-effort:
+    // 作废 last 记忆并降级为未加载,绝不让 dev_list 这类只读状态查询跟着炸;原因经 meta 明示给调用方
+    lastConfig = null;
+    try { REAL.dbStorage.removeItem(NS + "last"); } catch (_) {}
+    if (meta) meta.lastRestoreFailed = (e && e.code ? "[" + e.code + "] " : "") + String((e && e.message) || e);
+    return;
+  }
   if (CURRENT_GEN) CURRENT_GEN.retired = true;
   killTimers(CURRENT_GEN);
   CURRENT_GEN = fresh;
@@ -1532,6 +1545,7 @@ function devList() {
     const out0 = { ok: true, loaded: false, hint: "尚未加载;调用 dev_load {path}" };
     if (PENDING_RESTORE > 0) { out0.pendingRestore = PENDING_RESTORE; out0.hint += ";上次会话遗留 " + PENDING_RESTORE + " 条未还原写日志,建议先 dev_cleanup"; }
     if (spillWiped) out0.spillWiped = true; // 未加载分支同样暴露弃置清空(与已加载分支同口径)
+    if (meta.lastRestoreFailed) { out0.lastRestoreFailed = meta.lastRestoreFailed; out0.hint += ";上次目标自动恢复失败已作废,请重新 dev_load"; }
     return out0;
   }
   const g = CURRENT_GEN;
@@ -1544,6 +1558,7 @@ function devList() {
     pendingRestore: PENDING_RESTORE > 0 ? PENDING_RESTORE : undefined,
     untrackedJournal: untrackedCount > 0 ? untrackedCount : undefined, // journal 中不可还原的 fs 写条目数
     spillWiped: spillWiped || undefined, // 本次启动曾按 7 天弃置口径整体清空遗留 spill(显式不静默)
+    lastRestoreFailed: meta.lastRestoreFailed || undefined, // dirty 重建时自动恢复上次目标失败(已作废,现有 gen 仍可用)
   };
 }
 
