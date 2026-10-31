@@ -35,6 +35,9 @@ const Module = require("module");
 const hostTimers = require("timers");
 
 const REAL = utools; // 真实 API,桥内部一律用它,不经代理
+// 暴露给保活页(fallback-ui.html)做外链跳转(utools.shellOpenExternal;uTools 窗口内 a[target=_blank] 不保证生效);
+// 纯 Node(selftest)环境无 window,守卫跳过
+if (typeof window !== "undefined") window.utools = REAL;
 
 // ---------- 常量 ----------
 const RING_MAX = 500;
