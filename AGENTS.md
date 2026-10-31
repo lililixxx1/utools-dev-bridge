@@ -36,6 +36,7 @@ git push                        # 改动直接提交 main 并推送;提交信息
 
 ## 已知 gotchas(实机踩过)
 
+- **vm 渲染进程弃用警告无害**(uTools/Electron 34 每次加载桥都打 "The vm module of Node.js is deprecated in the renderer process"):2020 年起的旧警告,Electron 官方 2021 年已降级为 "unsupported,仅保留移除可能"(issue #31724),main 分支措辞已放宽为 "may be removed",breaking-changes 至今无移除条目;桥只用 vm 做独立 JS 执行容器、不碰 Blink 上下文,真机回归全绿。**若未来 Electron 真移除**:迁移 worker_threads(gen→worker、timeout 超时→terminate 杀 worker 重建,CJS loader 与门控逻辑可平移)。
 - **uTools 会挂起隐藏页**:桥的渲染进程闲置后定时器/回调可能不触发。多步网关操作要**单进程背靠背**完成(范式见 `scripts/final-restore.js`),不要依赖跨 dev_call 的延迟回调。
 - 沙箱定时器可能 schedule 有、fire 无(宿主挂起队列)——目标代码测试别依赖延迟回调,改同步或轮询。
 - MCP 客户端会话会缓存旧工具 schema,新参数(如 allowHostModules/dropAll)被滤掉时用 `scripts/gw-call.js` 直连。
