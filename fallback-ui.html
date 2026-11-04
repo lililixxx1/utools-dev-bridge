@@ -2,42 +2,112 @@
 <html lang="zh">
 <head><meta charset="utf-8"><title>dev-bridge</title>
 <style>
-body{font-family:system-ui;background:#181c26;color:#9ad1ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:0 16px;box-sizing:border-box}
-div{text-align:center;max-width:520px}
-h1{font-size:18px;font-weight:600}
-p{color:#76839e;font-size:13px}
-.res{margin-top:18px;padding-top:14px;border-top:1px solid #333b4e}
-.sec{color:#93a1bd;font-size:11px;letter-spacing:2px;margin:14px 0 7px}
-a{color:#9ad1ff;text-decoration:none;border-bottom:1px dotted #4a5a78}
-.item{font-size:13px;margin:5px 0}
-.item b{font-weight:600}
-a.ep{background:#2a3348;color:#aebdd8;padding:2px 6px;border-radius:4px;font-size:12px;word-break:break-all;border-bottom:0}
-.cmd{background:#202636;border:1px solid #333b4e;border-radius:6px;padding:10px 12px;text-align:left;margin:7px 0 0}
-.cmd p{margin:0;font-size:12.5px;color:#aebdd8;line-height:1.7}
-button{margin-top:8px;background:#2a3348;color:#9ad1ff;border:0;border-radius:4px;padding:4px 14px;font-size:12px;cursor:pointer;white-space:nowrap}
-button:hover{background:#34405c}
+/* 开发桥保活页 · Neofetch 风:整个插件窗口即一个跑着 neofetch 的终端。
+   紫罗兰 accent + 近黑紫底;ASCII 斜拉桥 + 键值信息 + 色板,内容全为真实桥信息。 */
+:root{
+  --accent:#b388ff; --accent-hi:#e6dcff;
+  --dim:#7d75a0; --text:#e8e6f0; --sub:#a9a3c2; --value:#d6c5ff;
+  --line:#2a2440; --rule:#453d63; --border:#6b5ca8; --bg:#0c0a13;
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);
+  font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"Courier New","Microsoft YaHei","PingFang SC",monospace}
+::selection{background:var(--accent);color:#140f22}
+
+/* 伪终端标题栏 */
+.bar{display:flex;align-items:center;gap:7px;padding:9px 14px;background:#131020;border-bottom:1px solid var(--line);flex:none}
+.bar i{width:10px;height:10px;border-radius:50%;background:#3d3358}
+.bar i:first-child{background:var(--accent)}
+.bar span{margin-left:8px;font-size:12px;color:var(--dim)}
+
+/* 主体三段纵向均匀分布 */
+.main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;gap:16px;padding:16px 24px 18px}
+
+/* 左 ASCII 桥 + 右键值信息 */
+.fetch{display:flex;gap:30px;align-items:center;flex-wrap:wrap}
+.art{margin:0;color:var(--accent);font-size:12.5px;line-height:1.4;text-shadow:0 0 12px rgba(179,136,255,.35);
+  font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"Courier New",monospace}
+.info{flex:1;min-width:260px;font-size:12.5px;line-height:1.9}
+.info p{margin:0}
+.info .host{color:#fff;font-weight:600;font-size:14px}
+.info .rule{color:var(--rule)}
+.info .k{display:inline-block;width:78px;color:var(--dim)}
+.info .ep{color:var(--value);border-bottom:1px dotted #6b5ca8}
+.info a{color:var(--accent);text-decoration:none;border-bottom:1px dotted #6b5ca8}
+.info a:hover{color:var(--accent-hi)}
+.info .d{color:var(--dim)}
+.palette{display:flex;gap:4px;margin-top:2px}
+.palette i{width:22px;height:11px;border-radius:2px}
+
+/* 使用方式三步 */
+.steps{display:grid;grid-template-columns:repeat(3,auto);gap:8px 22px;border-top:1px dashed var(--line);
+  padding-top:13px;font-size:12px;color:var(--sub)}
+.steps p{margin:0}
+.steps b{color:var(--accent);font-weight:600;margin-right:7px}
+
+/* 上手指令框 */
+.cmdbox{border:1px solid var(--border);background:rgba(24,18,38,.8);padding:11px 14px}
+.cmdbox .lab{margin:0 0 7px;font-size:11px;letter-spacing:2px;color:var(--accent)}
+.cmdbox .row{display:flex;gap:14px;align-items:flex-start}
+.cmdbox #cmdtext{flex:1;font-size:12px;line-height:1.7;color:#cfc6e6}
+.cmdbox button{flex:none;font:inherit;font-size:12px;color:var(--value);background:transparent;
+  border:1px solid var(--border);padding:3px 11px;cursor:pointer}
+.cmdbox button:hover{background:#241b3d;color:#fff}
+
+@media (max-width:700px){
+  .steps{grid-template-columns:1fr}
+  .fetch{gap:18px}
+}
 </style>
 </head>
-<body><div>
-<h1>开发桥 dev-bridge 已就绪</h1>
-<p>此窗口仅用于冷启动回退时拉起 preload,保持后台即可。<br>工具面与用法见仓库 README;agent 经 MCP 的 dev_* 工具调用。</p>
-<div class="res">
-<p class="sec">使 用 方 式</p>
-<p class="item">1. uTools 设置 → 「AI Agent 连接」,开启并复制 key</p>
-<p class="item">2. agent 的 MCP 端点 <a class="ep" href="http://127.0.0.1:3501/mcp">http://127.0.0.1:3501/mcp</a></p>
-<p class="item">3. key 填进 agent 配置,对话中让 agent 调 dev_* 工具(见 README)</p>
-<p class="sec">仓 库</p>
-<p class="item"><a href="https://github.com/lililixxx1/utools-dev-bridge" target="_blank" rel="noopener">github.com/lililixxx1/utools-dev-bridge</a></p>
-<p class="sec">配 套 AI 技 能 · 仓库 skills/ 目录</p>
-<p class="item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-dev-bridge" target="_blank" rel="noopener"><b>utools-dev-bridge</b></a> — 实测驾驶手册(dev_* 工具链)</p>
-<p class="item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-plugin-dev" target="_blank" rel="noopener"><b>utools-plugin-dev</b></a> — 插件开发知识库(API + 规范)</p>
-<p class="sec">上手指令 · 复制发给 AI agent</p>
-<div class="cmd">
-<p id="cmdtext">请安装 uTools 开发桥配套技能：clone https://github.com/lililixxx1/utools-dev-bridge ，把 skills/ 下 utools-dev-bridge（插件实测手册）与 utools-plugin-dev（API 参考）装进你的技能目录；此后实测/调试 uTools 插件，用 uTools MCP 的 dev_* 工具按手册驱动。</p>
-<button id="copybtn" type="button">复制</button>
-</div>
-</div>
-</div>
+<body>
+<div class="bar"><i></i><i></i><i></i><span>~/dev-bridge ❯ neofetch</span></div>
+<main class="main">
+
+  <div class="fetch">
+    <pre class="art" aria-hidden="true">  /\            /\
+ /  \          /  \
+/    \        /    \
+/      \____/      \
+====================
+D E V ·  B R I D G E
+~~~~~~~~~~~~~~~~~~~~</pre>
+    <div class="info">
+      <p class="host">bridge@utools</p>
+      <p class="rule">────────────────</p>
+      <p><span class="k">version</span><span>0.3.3 · CommonJS 单文件</span></p>
+      <p><span class="k">runtime</span><span>Electron 34 · Node 20</span></p>
+      <p><span class="k">sandbox</span><span>vm 沙箱 · 副作用可还原</span></p>
+      <p><span class="k">gateway</span><span class="ep">127.0.0.1:3501/mcp</span></p>
+      <p><span class="k">mission</span><span>冷启动回退保活 · 保持后台即可</span></p>
+      <p><span class="k">tools</span><span>dev_load dev_call dev_list</span></p>
+      <p><span class="k">　　　</span><span>dev_console dev_calls_log dev_cleanup</span></p>
+      <p><span class="k">repo</span><a href="https://github.com/lililixxx1/utools-dev-bridge">github.com/lililixxx1/utools-dev-bridge</a></p>
+      <p><span class="k">skills</span><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-dev-bridge">utools-dev-bridge ↗</a> <span class="d">实测驾驶手册</span></p>
+      <p><span class="k">　　　</span><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-plugin-dev">utools-plugin-dev ↗</a> <span class="d">插件 API 参考</span></p>
+      <p class="rule">────────────────</p>
+      <p class="palette" aria-hidden="true">
+        <i style="background:#ff5f87"></i><i style="background:#f78c6c"></i><i style="background:#ffcb6b"></i><i style="background:#c3e88d"></i>
+        <i style="background:#89ddff"></i><i style="background:#82aaff"></i><i style="background:#c792ea"></i><i style="background:#6c7383"></i>
+      </p>
+    </div>
+  </div>
+
+  <div class="steps">
+    <p><b>01</b>uTools 设置 → 「AI Agent 连接」→ 复制 key</p>
+    <p><b>02</b>key 填入 agent 的 MCP 配置</p>
+    <p><b>03</b>对话中让 agent 调 dev_* 工具</p>
+  </div>
+
+  <div class="cmdbox">
+    <p class="lab">» 上手指令 · 复制发给 AI agent</p>
+    <div class="row">
+      <p id="cmdtext" style="margin:0">请安装 uTools 开发桥配套技能：clone https://github.com/lililixxx1/utools-dev-bridge ，把 skills/ 下 utools-dev-bridge（插件实测手册）与 utools-plugin-dev（API 参考）装进你的技能目录；此后实测/调试 uTools 插件，用 uTools MCP 的 dev_* 工具按手册驱动。</p>
+      <button id="copybtn" type="button">[ copy ]</button>
+    </div>
+  </div>
+
+</main>
 <script>
 // 链接点击经 preload 暴露的 window.utools 调系统浏览器打开(uTools 窗口内 a[target=_blank] 不保证生效);
 // 无 utools(如直接用浏览器打开本文件)时退化为默认新标签
@@ -58,7 +128,7 @@ document.getElementById("copybtn").addEventListener("click", function () {
       : Promise.reject();
   p.then(function () { btn.textContent = "已复制 ✓"; },
         function () { btn.textContent = "复制失败"; });
-  setTimeout(function () { btn.textContent = "复制"; }, 2200);
+  setTimeout(function () { btn.textContent = "[ copy ]"; }, 2200);
 });
 </script>
 </body>
