@@ -4,9 +4,12 @@
  * 以桥的真实 utools dbStorage/dbCryptoStorage 代理(真实执行 + 写日志可还原)直接断言
  * window.githubStarsAPI 的 v2 分片存储、增量 patch、标签/笔记/索引逻辑;
  * 网络层走真实 https(仅 2 个小请求,均为预期失败路径)。
- * 运行:dev_load {path: 本文件, mode:"file", allowHostModules:["https"]} → dev_call runAll
+ * 运行：
+ *   1. 确保目标路径通过环境变量 GSM_TARGET 或默认兄弟目录存在
+ *   2. dev_load {path: 本文件, mode:"file", allowHostModules:["https"]} → dev_call runAll
  */
-const TARGET = "C:/Users/Administrator/Desktop/ccc/ccc/github-stars-manager-for-utools/preload.js";
+const path = require("path");
+const TARGET = process.env.GSM_TARGET || path.resolve(__dirname, "..", "..", "github-stars-manager-for-utools", "preload.js");
 require(TARGET);
 const api = window.githubStarsAPI;
 const ds = utools.dbStorage; // 桥代理:真实执行,便于直接读 gh: 分片/meta 键

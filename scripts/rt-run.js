@@ -1,123 +1,179 @@
 #!/usr/bin/env node
 /**
- * 真机回归一键驱动(单进程背靠背,防 uTools 挂起隐藏页;范式同 final-restore.js):
- *   node scripts/rt-run.js [rt-check目录]     # 目录缺省 = <仓库>/scripts/rt-check
- * 步骤:tools/list 核对六工具(顺带探测插件前缀:8.0 为 utools_plugin_<id>_<名>,旧版 utools.<id>.<名>)
- *   → dev_load rt-check → runAll(含 v80 用例)→ probeHost → v80ScheduleStub
- *   → __tool:rt8_probe(合成 ToolContext 端到端)→ dev_cleanup 还原并核对终态为空
- * key 从 ~/.zcode/cli/config.json 读取,只发往本机回环网关,不打印。
+ * 真机回归一键驱动（单进程背靠背）：
+ *   UTOOLS_MCP_KEY=<key> node scripts/rt-run.js [rt-check目录]
+ * 自动经 tools/list 探测开发桥工具前缀（8.0 utools_plugin_<id>_<名> / 旧版 utools.<id>.<名>）。
+ * 当检测到新版 13 工具（dev_run/dev_job/dev_ui_*）时，优先走 scripts/rt-suite.json 单次批量回归并附带 UI 真窗口与脱敏验证；
+ * 若当前 uTools 仍跑旧版 6 工具，则降级跑基础回归并提示重载插件目录。
  */
+"use strict";
+
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
 const RT = process.argv[2] || path.join(__dirname, "rt-check").replace(/\\/g, "/");
-// 插件前缀不写死:initialize 后经 tools/list 探测(8.0 网关改了命名规范)
 let PREFIX = null;
 
-const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".zcode", "cli", "config.json"), "utf8"));
-const srv = (((cfg.mcp || {}).servers || {})["utools"]) || {};
-const url = srv.url || "http://127.0.0.1:3501/mcp";
-// 只允许回环地址:key 会随请求发出,不得离开本机
-{
+function loadGatewayConfig() {
+  let srv = {};
+  const cfgPath = process.env.UTOOLS_MCP_CONFIG;
+  if (cfgPath && fs.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    srv = (cfg.mcpServers && cfg.mcpServers.utools)
+      || (((cfg.mcp || {}).servers || {}).utools)
+      || ((cfg.mcp || {}).utools)
+      || {};
+  }
+  const url = process.env.UTOOLS_MCP_URL || srv.url || "http://127.0.0.1:3501/mcp";
   let host = "";
   try { host = new URL(url).hostname; } catch (_) {}
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
     console.error("refuse non-loopback gateway: " + url);
     process.exit(2);
   }
+  const key = process.env.UTOOLS_MCP_KEY || process.env.X_MCP_KEY || (srv.headers || {})["x-mcp-key"] || "";
+  if (!key) {
+    console.error("未找到鉴权 key：请设置环境变量 UTOOLS_MCP_KEY（从 uTools 设置 → AI Agent 连接复制）或 UTOOLS_MCP_CONFIG");
+    process.exit(2);
+  }
+  return { url, key };
 }
-const key = (srv.headers || {})["x-mcp-key"] || "";
-if (!key) { console.error("x-mcp-key not found in config"); process.exit(2); }
+
+const { url, key } = loadGatewayConfig();
 const H = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "x-mcp-key": key };
-let nextId = 1, SID = null;
+let nextId = 1;
+let SID = null;
 
 async function rpc(method, params) {
-  const headers = SID ? { ...H, "Mcp-Session-Id": SID } : H;
+  const headers = SID ? Object.assign({}, H, { "Mcp-Session-Id": SID }) : H;
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }) });
-  if (!res.ok) throw new Error(method + " HTTP " + res.status + (res.status === 403 ? ",网关 key 轮换(去 uTools 重复制到 config.json)" : ""));
-  const sid = res.headers.get("mcp-session-id"); if (sid) SID = sid;
+  if (!res.ok) throw new Error(method + " HTTP " + res.status + (res.status === 403 ? ",网关 key 轮换(请更新 UTOOLS_MCP_KEY)" : ""));
+  const sid = res.headers.get("mcp-session-id");
+  if (sid) SID = sid;
   const text = await res.text();
   let body = null;
   if (/^(event:|data:)/m.test(text)) {
     const lines = text.split(/\r?\n/).filter((l) => l.startsWith("data:"));
     for (let i = lines.length - 1; i >= 0; i--) {
-      try { const o = JSON.parse(lines[i].slice(5).trim()); if (o && (o.result !== undefined || o.error !== undefined)) { body = o; break; } } catch (_) {}
+      try {
+        const o = JSON.parse(lines[i].slice(5).trim());
+        if (o && (o.result !== undefined || o.error !== undefined)) { body = o; break; }
+      } catch (_) {}
     }
-  } else if (text.trim()) body = JSON.parse(text);
+  } else if (text.trim()) {
+    body = JSON.parse(text);
+  }
   if (!body) throw new Error(method + ": no result");
   if (body.error) throw new Error(method + ": " + JSON.stringify(body.error));
   return body.result;
 }
+
 async function call(tool, args) {
-  const r = await rpc("tools/call", { name: PREFIX + tool, arguments: args });
+  const r = await rpc("tools/call", { name: PREFIX + tool, arguments: args || {} });
   if (r.isError) throw new Error(tool + " isError: " + JSON.stringify(r.content || r).slice(0, 300));
-  const sc = r.structuredContent || {};
+  const sc = r.structuredContent || JSON.parse((r.content && r.content[0] && r.content[0].text) || "{}");
   if (sc.ok === false) throw new Error(tool + " ok:false " + JSON.stringify(sc).slice(0, 500));
   return sc;
 }
-const ok = (cond, label) => { console.log((cond ? "PASS" : "FAIL") + ": " + label); if (!cond) process.exitCode = 1; };
+
+const ok = (cond, label) => {
+  console.log((cond ? "PASS" : "FAIL") + ": " + label);
+  if (!cond) process.exitCode = 1;
+};
 
 (async () => {
-  await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "rt-run", version: "0.1" } });
-  await fetch(url, { method: "POST", headers: { ...H, "Mcp-Session-Id": SID }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }).catch(() => {});
+  await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "rt-run", version: "0.4.0" } });
+  await fetch(url, { method: "POST", headers: Object.assign({}, H, { "Mcp-Session-Id": SID }), body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }).catch(() => {});
 
-  // 1) tools/list:六工具应全部注册到 MCP;并探测本插件前缀(8.0 下划线/旧版点分隔)
   const tl = await rpc("tools/list", {});
   const all = (tl.tools || []).map((t) => String(t.name));
-  // 插件 id 会漂移(dev_zii2hjtj / 8.0 重装后 zii2hjtj),匹配用核心 id zii2hjtj 兼容两种
-  const devLoadFull = all.find((n) => n.includes("zii2hjtj") && n.endsWith("dev_load"));
-  PREFIX = devLoadFull ? devLoadFull.slice(0, -"dev_load".length) : null;
-  if (!PREFIX) throw new Error("tools/list 里找不到本插件的 dev_load(可能插件未装载/网关 key 失效)");
+  const bridgeId = process.env.UTOOLS_BRIDGE_ID || "";
+  const devLoadFull = (bridgeId && all.find((n) => n.includes(bridgeId) && /(?:_|\.)dev_load$/.test(n)))
+    || all.find((n) => /(?:_|\.)dev_load$/.test(n))
+    || all.find((n) => n === "dev_load")
+    || null;
+  if (!devLoadFull) throw new Error("tools/list 里找不到 dev_load（可能插件未装载或 UTOOLS_MCP_KEY 无效）");
+  PREFIX = devLoadFull.slice(0, -"dev_load".length);
   const mine = all.filter((n) => n.startsWith(PREFIX));
-  const want = ["dev_load", "dev_call", "dev_list", "dev_console", "dev_calls_log", "dev_cleanup"];
-  ok(want.every((w) => mine.includes(PREFIX + w)), "tools/list 六工具齐全(前缀=" + PREFIX + ",本插件 " + mine.length + " 个,网关共 " + all.length + " 个)");
+  const hasV04 = mine.includes(PREFIX + "dev_run");
 
-  // 2) dev_list:桥存活
-  const dl = await call("dev_list", {});
-  ok(dl.ok === true, "dev_list ok(loaded=" + dl.loaded + ")");
+  if (hasV04) {
+    const want13 = [
+      "dev_load", "dev_call", "dev_run", "dev_job", "dev_list", "dev_console", "dev_calls_log", "dev_cleanup",
+      "dev_ui_open", "dev_ui_eval", "dev_ui_snapshot", "dev_ui_screenshot", "dev_ui_close",
+    ];
+    ok(want13.every((w) => mine.includes(PREFIX + w)), "tools/list 13 工具齐全（前缀=" + PREFIX + "）");
 
-  // 3) dev_load rt-check(rt-check 在 runAll 里才 registerTool,装载时刻 tools 为空是预期)
-  const load = await call("dev_load", { path: RT });
-  ok(load.ok === true, "dev_load rt-check(exports=" + (load.exports || []).length + ",tools=[" + ((load.tools || []).map((t) => t.name)).join(",") + "])");
+    // 1) dev_run 批量运行声明式回归套件
+    const suite = JSON.parse(fs.readFileSync(path.join(__dirname, "rt-suite.json"), "utf8"));
+    const runRes = await call("dev_run", {
+      load: { path: RT },
+      steps: suite.steps,
+      stopOnFail: suite.stopOnFail,
+      cleanup: suite.cleanup,
+    });
+    const runAllStep = (runRes.steps || [])[0] || {};
+    const rr = runAllStep.result || {};
+    ok(runRes.ok === true && runRes.passed === suite.steps.length && rr.total >= 22,
+      "dev_run 批量回归全绿（steps=" + runRes.passed + "/" + runRes.total + ", rt-check=" + rr.total + "例）");
 
-  // 4) runAll:全部用例断言全绿(total 阈值防用例被静默删减;含 v80.events / v80.registerTool)
-  const ra = await call("dev_call", { name: "rt.runAll", args: [] });
-  const rr = (ra.result || {});
-  const results = rr.results || [];
-  const bad = results.filter((r) => !r.pass);
-  ok(rr.fail === 0 && rr.total >= 22, "runAll " + rr.total + " 例全绿(fail=" + rr.fail + ")");
-  for (const r of bad) console.log("  FAIL-Detail " + r.name + ": " + r.detail);
-  const v80e = results.find((r) => r.name === "v80.events");
-  const v80r = results.find((r) => r.name === "v80.registerTool");
-  ok(v80e && v80e.pass, "v80.events:onPluginReady/onScheduleTrigger 登记不挂宿主(" + (v80e && v80e.detail) + ")");
-  ok(v80r && v80r.pass, "v80.registerTool:处理器捕获");
+    // 2) dev_list 终态清零 + 精简摘要
+    const dl = await call("dev_list", {});
+    ok(dl.exports === undefined && typeof dl.exportsCount === "number" && dl.pendingRestore === undefined && dl.untrackedJournal === undefined,
+      "dev_list 默认精简且写日志终态清零（exportsCount=" + dl.exportsCount + "）");
 
-  // 4b) runAll 之后 tools 清单应出现 rt8_probe(装载期/运行期注册都能被捕获)
-  const dl2 = await call("dev_list", {});
-  ok((dl2.tools || []).some((t) => t.name === "rt8_probe"),
-    "registerTool 捕获:runAll 后 dev_list tools 含 rt8_probe([" + ((dl2.tools || []).map((t) => t.name)).join(",") + "])");
+    // 3) dev_call include + 默认脱敏
+    const ph = await call("dev_call", { name: "rt.probeHost", include: ["calls"] });
+    const nidCall = (ph.calls || []).find((c) => c.api === "utools.getNativeId");
+    ok(!nidCall || /^<redacted len=/.test(String(nidCall.result)), "dev_calls_log 默认对敏感调用脱敏");
 
-  // 5) probeHost:记录真实运行时版本(8.0 beta / Node 20)
-  const ph = await call("dev_call", { name: "rt.probeHost", args: [] });
-  ok(ph.result && ph.result.appVersion, "probeHost 返回 appVersion=" + (ph.result && ph.result.appVersion) + " node=" + (ph.result && ph.result.nodeVersion));
+    // 4) dev_call async + dev_job
+    const jobStart = await call("dev_call", { name: "rt.timerCheck", async: true });
+    const jobDone = await call("dev_job", { id: jobStart.jobId, waitMs: 5000 });
+    ok(jobDone.status === "done" && jobDone.result === "timer-fired", "dev_job 异步完成: " + jobDone.result);
 
-  // 6) 8.0 定时 API stub(requestSchedule 保 thenable)
-  const sc = await call("dev_call", { name: "rt.v80ScheduleStub", args: [] });
-  ok(sc.result === "stubbed+thenable", "v80ScheduleStub:thenable+删除 stub(" + sc.result + ")");
+    // 5) dev_ui_* 真窗口端到端（临时 UI 插件）
+    const tmpUi = fs.mkdtempSync(path.join(os.tmpdir(), "devbridge-rt-ui-"));
+    try {
+      fs.writeFileSync(path.join(tmpUi, "plugin.json"), JSON.stringify({
+        main: "index.html",
+        preload: "preload.js",
+        logo: "logo.png",
+        features: [{ code: "rtui", cmds: ["rtui"] }],
+      }));
+      fs.writeFileSync(path.join(tmpUi, "logo.png"), "");
+      fs.writeFileSync(path.join(tmpUi, "preload.js"), 'window.rtBridge = { writeKv: (k, v) => utools.dbStorage.setItem(k, v) };\n');
+      fs.writeFileSync(path.join(tmpUi, "index.html"), '<!doctype html><html><head><title>RT-UI</title></head><body><h1 id="h">Ready</h1><button id="b" onclick="document.getElementById(\'h\').textContent=\'Done\';window.rtBridge.writeKv(\'_dev_:rtui\',\'1\')">Go</button></body></html>');
 
-  // 7) __tool:rt8_probe 端到端(合成 ToolContext 注入)
-  const tp = await call("dev_call", { name: "__tool:rt8_probe", args: [{ x: 42 }] });
-  ok(tp.result && tp.result.got === 42, "__tool:rt8_probe({x:42}) → {got:" + (tp.result && tp.result.got) + "}");
-
-  // 8) 还原:断言零失败(失败条目保留重试时不增计数,单看 ok/计数无鉴别力),再以 dev_list 直证终态为空
-  const cu = await call("dev_cleanup", {});
-  const rc2 = (cu.restored || {});
-  ok(cu.ok === true && (cu.failures || []).length === 0,
-    "dev_cleanup 还原零失败(dbRestore=" + rc2.dbRestore + ",dbDelete=" + rc2.dbDelete + ",kvRestore=" + rc2.kvRestore + ",kvDelete=" + rc2.kvDelete + ")");
-  const fin = await call("dev_list", {});
-  ok(fin.pendingRestore === undefined && fin.untrackedJournal === undefined,
-    "写日志终态为空(dev_list 无 pendingRestore / untrackedJournal)");
+      const uiOpen = await call("dev_ui_open", { path: tmpUi });
+      ok(uiOpen.ok && uiOpen.title === "RT-UI", "dev_ui_open 窗口加载成功");
+      await call("dev_ui_eval", { js: "document.getElementById('b').click()" });
+      const snap = await call("dev_ui_snapshot", {});
+      ok(snap.ok && /Done/.test(snap.text || ""), "dev_ui_snapshot 捕获交互后 DOM");
+      const shot = await call("dev_ui_screenshot", {});
+      ok(shot.ok && shot.bytes > 0 && fs.existsSync(shot.path), "dev_ui_screenshot 生成 PNG (" + shot.bytes + "B)");
+      try { fs.unlinkSync(shot.path); } catch (_) {}
+      await call("dev_ui_close", {});
+      const uiClean = await call("dev_cleanup", {});
+      ok(uiClean.ok && uiClean.restored.kvDelete >= 1, "dev_cleanup 还原 UI 窗口写副作用");
+    } finally {
+      fs.rmSync(tmpUi, { recursive: true, force: true });
+    }
+  } else {
+    console.log("NOTE: 网关当前挂载旧版 6 工具桥，执行兼容回归；请在 uTools 开发者工具重载新版仓库以测 13 工具。");
+    const want = ["dev_load", "dev_call", "dev_list", "dev_console", "dev_calls_log", "dev_cleanup"];
+    ok(want.every((w) => mine.includes(PREFIX + w)), "tools/list 六工具齐全（前缀=" + PREFIX + "）");
+    await call("dev_load", { path: RT });
+    const ra = await call("dev_call", { name: "rt.runAll", args: [] });
+    const rr = ra.result || {};
+    ok(rr.fail === 0 && rr.total >= 22, "runAll " + rr.total + " 例全绿(fail=" + rr.fail + ")");
+    const cu = await call("dev_cleanup", {});
+    ok(cu.ok === true && (cu.failures || []).length === 0, "dev_cleanup 还原零失败");
+  }
 
   console.log("== RT-RUN " + (process.exitCode ? "FAILED" : "ALL PASS") + " ==");
-})().catch((e) => { console.error("ABORT: " + (e && e.message ? e.message : String(e))); process.exit(1); });
+})().catch((e) => {
+  console.error("ABORT: " + (e && e.message ? e.message : String(e)));
+  process.exit(1);
+});

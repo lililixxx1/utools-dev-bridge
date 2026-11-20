@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "label": "rt.runAll 全套断言",
+      "call": "rt.runAll",
+      "args": [],
+      "expect": { "ok": true, "path": "result.fail", "eq": 0 }
+    },
+    {
+      "label": "rt.probeHost 宿主版本探测",
+      "call": "rt.probeHost",
+      "args": [],
+      "expect": { "ok": true, "path": "result.appVersion", "truthy": true }
+    },
+    {
+      "label": "rt.v80ScheduleStub 定时 stub 保 thenable",
+      "call": "rt.v80ScheduleStub",
+      "args": [],
+      "expect": { "ok": true, "eq": "stubbed+thenable" }
+    },
+    {
+      "label": "__tool:rt8_probe 合成 ToolContext 端到端",
+      "call": "__tool:rt8_probe",
+      "args": [{ "x": 42 }],
+      "expect": { "ok": true, "path": "result.got", "eq": 42 }
+    },
+    {
+      "label": "__enter 触发生命周期并内联检查 console",
+      "call": "__enter",
+      "args": [{ "code": "rt", "type": "text", "payload": "hi", "from": "main" }],
+      "expect": { "ok": true, "hasConsole": "rt-enter" }
+    }
+  ],
+  "stopOnFail": true,
+  "cleanup": true
+}

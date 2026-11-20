@@ -1,23 +1,20 @@
 #!/usr/bin/env node
 /**
- * MCP 网关直连排障脚本(仅本机调试用):
- *   node gw-call.js <toolName> [jsonArgs]
- * key 从 ~/.zcode/cli/config.json (mcp.servers["utools"].headers["x-mcp-key"]) 读取,只发往本机网关,不打印。
- * 用途:绕过 MCP 客户端侧缓存的旧 inputSchema(如 allowHostModules 未出现在会话 schema 时)。
+ * MCP 网关直连排障脚本（仅本机回环调试用）：
+ *   UTOOLS_MCP_KEY=<key> node scripts/gw-call.js <toolName> [jsonArgs]
+ * 鉴权读取顺序：UTOOLS_MCP_KEY / X_MCP_KEY → UTOOLS_MCP_CONFIG（JSON 文件内 mcpServers/mcp.servers.utools）。
+ * 工具名自动经 tools/list 解析：支持全名或裸名（兼容 8.0 utools_plugin_<id>_<名> 与旧版 utools.<id>.<名>）。
  */
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+"use strict";
 
-// 网关侧工具名带插件前缀:8.0 为 utools_plugin_<id>_<名>(下划线),旧版为 utools.<id>.<名>(点)。
-// 插件 id 会漂移:开发者工具装载为 dev_zii2hjtj,8.0 重装后为 zii2hjtj(dev_ 前缀丢失),匹配统一用核心 id zii2hjtj 兼容两种。
-// 全名/裸名统一经 tools/list 解析:精确匹配优先(8.0 下划线全名不含点,includes(".") 判不了全名),
-// 裸名再按"本插件前缀 + 裸名"补全,两种命名都兼容。
+const fs = require("fs");
+
 const tool = process.argv[2];
 if (!tool) {
-  console.error("usage: node gw-call.js <toolName> [jsonArgs]");
+  console.error("usage: UTOOLS_MCP_KEY=<key> node scripts/gw-call.js <toolName> [jsonArgs]");
   process.exit(2);
 }
+
 let args = {};
 if (process.argv[3]) {
   try {
@@ -28,34 +25,41 @@ if (process.argv[3]) {
   }
 }
 
-const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".zcode", "cli", "config.json"), "utf8"));
-const srv = (((cfg.mcp || {}).servers || {})["utools"]) || ((cfg.mcp || {})["utools"]) || {};
-const url = srv.url || "http://127.0.0.1:3501/mcp";
-// 只允许回环地址:key 会随请求发出,不得离开本机
-{
+function loadGatewayConfig() {
+  let srv = {};
+  const cfgPath = process.env.UTOOLS_MCP_CONFIG;
+  if (cfgPath && fs.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    srv = (cfg.mcpServers && cfg.mcpServers.utools)
+      || (((cfg.mcp || {}).servers || {}).utools)
+      || ((cfg.mcp || {}).utools)
+      || {};
+  }
+  const url = process.env.UTOOLS_MCP_URL || srv.url || "http://127.0.0.1:3501/mcp";
   let host = "";
   try { host = new URL(url).hostname; } catch (_) {}
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
     console.error("refuse non-loopback gateway: " + url);
     process.exit(2);
   }
-}
-const key = (srv.headers || {})["x-mcp-key"] || process.env.X_MCP_KEY || "";
-if (!key) {
-  console.error("x-mcp-key not found in config");
-  process.exit(2);
+  const key = process.env.UTOOLS_MCP_KEY || process.env.X_MCP_KEY || (srv.headers || {})["x-mcp-key"] || "";
+  if (!key) {
+    console.error("未找到鉴权 key：请设置环境变量 UTOOLS_MCP_KEY（从 uTools 设置 → AI Agent 连接复制）或 UTOOLS_MCP_CONFIG");
+    process.exit(2);
+  }
+  return { url, key };
 }
 
+const { url, key } = loadGatewayConfig();
 const baseHeaders = {
   "Content-Type": "application/json",
   Accept: "application/json, text/event-stream",
   "x-mcp-key": key,
 };
-
 let nextId = 1;
 
 async function rpc(method, params, sessionId) {
-  const headers = { ...baseHeaders };
+  const headers = Object.assign({}, baseHeaders);
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
   const res = await fetch(url, {
     method: "POST",
@@ -68,13 +72,12 @@ async function rpc(method, params, sessionId) {
   let body = null;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("text/event-stream") || /^(event:|data:)/m.test(text)) {
-    // SSE:从后向前找第一条能解析且带 result/error 的 data 行(尾部 ping/通知/分段 data 不误取)
     const lines = text.split(/\r?\n/).filter((l) => l.startsWith("data:"));
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const o = JSON.parse(lines[i].slice(5).trim());
         if (o && (o.result !== undefined || o.error !== undefined || o.jsonrpc)) { body = o; break; }
-      } catch (_) { /* 继续向前找 */ }
+      } catch (_) {}
     }
   } else if (text.trim()) {
     body = JSON.parse(text);
@@ -86,29 +89,35 @@ async function rpc(method, params, sessionId) {
   const init = await rpc("initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
-    clientInfo: { name: "devbridge-gw-debug", version: "0.1.0" },
+    clientInfo: { name: "devbridge-gw-call", version: "0.4.0" },
   });
   const sid = init.sid;
   if (!sid) throw new Error("no session id in initialize response");
-  // notifications/initialized(无 id,204/200 皆可,失败不致命)
   await fetch(url, {
     method: "POST",
-    headers: { ...baseHeaders, "Mcp-Session-Id": sid },
+    headers: Object.assign({}, baseHeaders, { "Mcp-Session-Id": sid }),
     body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
   }).catch(() => {});
-  // 工具全名解析:tools/list 精确匹配(全名直传)→ 裸名按本插件前缀补全 → 都未命中才报错(回显被查名)
-  let fullTool = null;
-  {
-    const tl = await rpc("tools/list", {}, sid);
-    const all = ((tl.body && tl.body.result && tl.body.result.tools) || []).map((t) => String(t.name));
-    fullTool = all.find((n) => n === tool)
-      || all.find((n) => n.includes("zii2hjtj") && (n.endsWith("_" + tool) || n.endsWith("." + tool)))
-      || null;
-    if (!fullTool) {
-      console.error("tool '" + tool + "' not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded? name spelled right?");
-      process.exit(1);
-    }
+
+  const tl = await rpc("tools/list", {}, sid);
+  const all = ((tl.body && tl.body.result && tl.body.result.tools) || []).map((t) => String(t.name));
+  const bridgeId = process.env.UTOOLS_BRIDGE_ID || "";
+  const devLoadFull = (bridgeId && all.find((n) => n.includes(bridgeId) && /(?:_|\.)dev_load$/.test(n)))
+    || all.find((n) => /(?:_|\.)dev_load$/.test(n))
+    || all.find((n) => n === "dev_load")
+    || null;
+  const prefix = devLoadFull ? devLoadFull.slice(0, -"dev_load".length) : null;
+
+  const fullTool = all.find((n) => n === tool)
+    || (prefix && all.find((n) => n === prefix + tool))
+    || all.find((n) => n.endsWith("_" + tool) || n.endsWith("." + tool))
+    || null;
+
+  if (!fullTool) {
+    console.error("tool '" + tool + "' not found in tools/list (gateway has " + all.length + " tools); utools plugin loaded? name spelled right?");
+    process.exit(1);
   }
+
   const out = await rpc("tools/call", { name: fullTool, arguments: args }, sid);
   if (!out.body || out.body.result === undefined) {
     console.error("GW-FAIL: no result in gateway response");
@@ -120,7 +129,6 @@ async function rpc(method, params, sessionId) {
   }
   const r = out.body.result || {};
   if (r.isError) {
-    // 工具级错误包在 result 里(isError:true),也要非零退出
     console.log(JSON.stringify(r, null, 2));
     process.exit(1);
   }

@@ -1,0 +1,15 @@
+{
+  "name": "utools-dev-bridge",
+  "version": "0.4.0",
+  "private": true,
+  "description": "面向 AI Agent 的 uTools 插件开发测试桥",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "selftest": "node scripts/selftest.js",
+    "docs": "node scripts/gen-docs.js",
+    "docs:check": "node scripts/gen-docs.js --check",
+    "rt": "node scripts/rt-run.js",
+    "bench": "node scripts/bench-workflow.js",
+    "pack:stage": "node scripts/pack-stage.js --dry-run"
+  }
+}
