@@ -79,15 +79,26 @@ function renderErrorCodesTable() {
   return lines.join("\n");
 }
 
+// 转义 HTML 属性字符，防止工具摘要含引号或尖括号时破坏保活页标签结构
+function escapeHtmlAttr(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function renderFallbackToolsLines() {
-  const names = Object.keys(TOOLS);
-  const rows = [];
-  for (let i = 0; i < names.length; i += 4) {
-    const chunk = names.slice(i, i + 4).join(" ");
-    const label = i === 0 ? "tools" : "　　　";
-    rows.push("      <p><span class=\"k\">" + label + "</span><span>" + chunk + "</span></p>");
+  const chips = [];
+  for (const [name, t] of Object.entries(TOOLS)) {
+    const group = name.startsWith("dev_ui_") ? "ui" : "core";
+    const summary = escapeHtmlAttr(t.summary || "");
+    chips.push(
+      "          <button type=\"button\" class=\"tool-chip\" data-group=\"" + group
+      + "\" data-tool=\"" + name + "\" data-summary=\"" + summary + "\">" + name + "</button>"
+    );
   }
-  return rows.join("\n");
+  return chips.join("\n");
 }
 
 function replaceBlock(content, marker, replacement) {
@@ -170,6 +181,7 @@ hasDrift = applyFile("skills/utools-dev-bridge/SKILL.md", (raw) => {
 
 hasDrift = applyFile("fallback-ui.html", (raw) => {
   let out = replaceInlineBlock(raw, "META_VERSION", VERSION + " · CommonJS 模块化");
+  out = replaceInlineBlock(out, "TOOLS_COUNT", String(Object.keys(TOOLS).length));
   out = replaceBlock(out, "TOOLS_LINES", fallbackToolsLines);
   return out;
 }) || hasDrift;

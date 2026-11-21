@@ -1,120 +1,608 @@
 <!DOCTYPE html>
 <html lang="zh">
-<head><meta charset="utf-8"><title>dev-bridge</title>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 声明深色配色方案，避免桌面窗体冷启动初始化阶段出现白底闪烁（FOUC） -->
+<meta name="color-scheme" content="dark">
+<title>dev-bridge · uTools 插件开发测试桥</title>
 <style>
-/* 开发桥保活页 · Neofetch 风:整个插件窗口即一个跑着 neofetch 的终端。
-   紫罗兰 accent + 近黑紫底;ASCII 斜拉桥 + 键值信息 + 色板,内容全为真实桥信息。 */
+/* 开发桥保活页 · Neofetch 终端仪表盘风格：兼顾 800×542 uTools 视口一屏完整呈现与键盘可访问性 */
 :root{
-  --accent:#b388ff; --accent-hi:#e6dcff;
-  --dim:#7d75a0; --text:#e8e6f0; --sub:#a9a3c2; --value:#d6c5ff;
-  --line:#2a2440; --rule:#453d63; --border:#6b5ca8; --bg:#0c0a13;
+  color-scheme:dark;
+  --bg:#0c0a13;
+  --surface:#141122;
+  --card:rgba(21,17,36,.92);
+  --card-hi:rgba(31,24,52,.96);
+  --accent:#b892ff;
+  --accent-hi:#ede4ff;
+  --ui-accent:#7cd4ff;
+  --ok:#6ee7b7;
+  --text:#eeeaf8;
+  --sub:#c2bcdb;
+  --dim:#9890bd;
+  --value:#dfd2ff;
+  --line:#31294d;
+  --border:#7b6bc0;
+  --chip-bg:rgba(184,146,255,.08);
+  --chip-border:#6d5ea8;
+  --ui-chip-bg:rgba(124,212,255,.08);
+  --ui-chip-border:#3d7d9e;
+  --scrollbar-thumb:#7a6ca8;
+  --scrollbar-track:#131020;
+
+  scrollbar-width:thin;
+  scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);
 }
+
+/* 回退方案：不支持标准 scrollbar-color 的旧内核重置 scrollbar-width 并启用 ::-webkit-scrollbar */
+@supports not (scrollbar-color:auto){
+  :root{scrollbar-width:auto}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:4px}
+  ::-webkit-scrollbar-track{background:var(--scrollbar-track)}
+}
+
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);
-  font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"Courier New","Microsoft YaHei","PingFang SC",monospace}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  background-color:var(--bg);
+  background-image:radial-gradient(ellipse 46% 52% at 15% 34%,rgba(184,146,255,.11),transparent 72%);
+  color:var(--text);
+  font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"Courier New","Microsoft YaHei","PingFang SC",monospace;
+  -webkit-font-smoothing:antialiased;
+}
 ::selection{background:var(--accent);color:#140f22}
 
-/* 伪终端标题栏 */
-.bar{display:flex;align-items:center;gap:7px;padding:9px 14px;background:#131020;border-bottom:1px solid var(--line);flex:none}
-.bar i{width:10px;height:10px;border-radius:50%;background:#3d3358}
-.bar i:first-child{background:var(--accent)}
-.bar span{margin-left:8px;font-size:12px;color:var(--dim)}
+/* 屏幕阅读器专用隐藏工具类：仅对辅助技术可见，聚焦时可恢复可见 */
+.visually-hidden:where(:not(:focus-within,:active)){
+  position:absolute !important;
+  clip-path:inset(50%) !important;
+  overflow:hidden !important;
+  width:1px !important;
+  height:1px !important;
+  margin:-1px !important;
+  padding:0 !important;
+  border:0 !important;
+  white-space:nowrap !important;
+}
 
-/* 主体三段纵向均匀分布 */
-.main{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;gap:16px;padding:16px 24px 18px}
+/* 全局高对比度键盘焦点环 */
+:where(a,button):focus-visible{
+  outline:2px solid var(--accent-hi);
+  outline-offset:2px;
+}
 
-/* 左 ASCII 桥 + 右键值信息 */
-.fetch{display:flex;gap:30px;align-items:center;flex-wrap:wrap}
-.art{margin:0;color:var(--accent);font-size:12.5px;line-height:1.4;text-shadow:0 0 12px rgba(179,136,255,.35);
-  font-family:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"Courier New",monospace}
-.info{flex:1;min-width:260px;font-size:12.5px;line-height:1.9}
-.info p{margin:0}
-.info .host{color:#fff;font-weight:600;font-size:14px}
-.info .rule{color:var(--rule)}
-.info .k{display:inline-block;width:78px;color:var(--dim)}
-.info .ep{color:var(--value);border-bottom:1px dotted #6b5ca8}
-.info a{color:var(--accent);text-decoration:none;border-bottom:1px dotted #6b5ca8}
-.info a:hover{color:var(--accent-hi)}
-.info .d{color:var(--dim)}
-.palette{display:flex;gap:4px;margin-top:2px}
-.palette i{width:22px;height:11px;border-radius:2px}
+/* 紧凑型单行终端标题栏（严格控制在视口高度 12% 以内） */
+.bar{
+  flex:none;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:6px 16px;
+  background:var(--surface);
+  border-bottom:1px solid var(--line);
+}
+.bar-left{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  min-width:0;
+}
+.bar-dots{display:inline-flex;align-items:center;gap:6px}
+.bar-dots i{display:block;width:9px;height:9px;border-radius:50%;background:#463c66}
+.bar-dots i:first-child{background:var(--accent)}
+.bar-path{
+  margin-left:6px;
+  font-size:12px;
+  color:var(--dim);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid #3c7d67;
+  background:rgba(110,231,183,.09);
+  color:var(--ok);
+  font-size:11px;
+  line-height:1.4;
+  white-space:nowrap;
+}
+.status-dot{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--ok);
+}
+@media (prefers-reduced-motion:no-preference){
+  .status-dot{animation:pulse-dot 2.4s ease-in-out infinite}
+  @keyframes pulse-dot{
+    0%,100%{opacity:1;transform:scale(1)}
+    50%{opacity:.45;transform:scale(.82)}
+  }
+}
 
-/* 使用方式三步 */
-.steps{display:grid;grid-template-columns:repeat(3,auto);gap:8px 22px;border-top:1px dashed var(--line);
-  padding-top:13px;font-size:12px;color:var(--sub)}
-.steps p{margin:0}
-.steps b{color:var(--accent);font-weight:600;margin-right:7px}
+/* 主内容区：在 800×542 窗口中保持均衡留白且无纵向裁切 */
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  gap:10px;
+  padding:12px 20px 13px;
+}
 
-/* 上手指令框 */
-.cmdbox{border:1px solid var(--border);background:rgba(24,18,38,.8);padding:11px 14px}
-.cmdbox .lab{margin:0 0 7px;font-size:11px;letter-spacing:2px;color:var(--accent)}
-.cmdbox .row{display:flex;gap:14px;align-items:flex-start}
-.cmdbox #cmdtext{flex:1;font-size:12px;line-height:1.7;color:#cfc6e6}
-.cmdbox button{flex:none;font:inherit;font-size:12px;color:var(--value);background:transparent;
-  border:1px solid var(--border);padding:3px 11px;cursor:pointer}
-.cmdbox button:hover{background:#241b3d;color:#fff}
+/* Neofetch 主视图：左桥徽标 + 右实时规格与工具面板 */
+.fetch{
+  display:grid;
+  grid-template-columns:182px minmax(0,1fr);
+  gap:20px;
+  align-items:center;
+}
 
+.brand-col{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+  padding:12px 10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:rgba(19,16,32,.68);
+}
+.art{
+  margin:0;
+  color:var(--accent);
+  font-size:11.5px;
+  line-height:1.38;
+  text-shadow:0 0 14px rgba(184,146,255,.32);
+  font-family:inherit;
+}
+.brand-sub{
+  margin:0;
+  font-size:10px;
+  letter-spacing:1.6px;
+  color:var(--dim);
+  text-transform:uppercase;
+}
+.palette{
+  display:flex;
+  gap:4px;
+  margin:0;
+}
+.palette i{
+  display:block;
+  width:18px;
+  height:9px;
+  border-radius:2px;
+}
+
+.info{min-width:0}
+.host-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  padding-bottom:6px;
+  margin-bottom:7px;
+  border-bottom:1px solid var(--line);
+}
+.host{
+  margin:0;
+  font-size:14.5px;
+  font-weight:700;
+  line-height:1.3;
+  color:#fff;
+  letter-spacing:.2px;
+}
+.host .at{color:var(--accent)}
+.ver-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:1px 8px;
+  border-radius:5px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--value);
+  font-size:11px;
+  line-height:1.5;
+}
+
+/* 语义化键值列表 */
+.specs{
+  margin:0;
+  display:grid;
+  grid-template-columns:62px minmax(0,1fr);
+  gap:2px 10px;
+  align-items:center;
+  font-size:12px;
+  line-height:1.45;
+}
+.specs dt{
+  color:var(--dim);
+  font-weight:500;
+}
+.specs dd{
+  margin:0;
+  color:var(--text);
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+.specs a{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  min-block-size:24px;
+  color:var(--accent);
+  text-decoration:none;
+  border-bottom:1px dotted var(--border);
+  transition:color .14s ease,border-color .14s ease;
+}
+.specs a:hover{color:var(--accent-hi);border-bottom-color:var(--accent-hi)}
+.skills-row{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:2px 14px;
+}
+.skill-item{display:inline-flex;align-items:center;gap:6px}
+.skill-desc{color:var(--dim);font-size:11.5px}
+
+/* 可点击复制的 MCP 网关芯片 */
+.ep-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-block-size:24px;
+  padding:1px 8px;
+  font:inherit;
+  font-size:12px;
+  color:var(--value);
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:5px;
+  cursor:pointer;
+  transition:background-color .14s ease,border-color .14s ease,color .14s ease;
+}
+.ep-btn:hover{background:#231b3c;border-color:var(--accent);color:#fff}
+.ep-tag{
+  font-size:10.5px;
+  color:var(--accent);
+  padding-left:6px;
+  border-left:1px solid var(--line);
+}
+.ep-btn.is-copied{border-color:#3c7d67;color:var(--ok)}
+.ep-btn.is-copied .ep-tag{color:var(--ok);border-left-color:#3c7d67}
+
+/* 交互式工具清单 */
+.tools-block{
+  margin-top:8px;
+  padding-top:7px;
+  border-top:1px dashed var(--line);
+}
+.tools-head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:5px;
+  min-height:18px;
+}
+.tools-label{
+  font-size:12px;
+  color:var(--dim);
+  flex:none;
+}
+.count-pill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:20px;
+  padding:0 5px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--value);
+  font-size:10.5px;
+  line-height:1.45;
+  flex:none;
+}
+.tool-hint{
+  flex:1;
+  min-width:0;
+  font-size:11.5px;
+  color:var(--sub);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tool-hint.is-active{color:var(--accent-hi)}
+.tool-hint.is-copied{color:var(--ok)}
+.tools-list{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 5px;
+}
+.tool-chip{
+  display:inline-flex;
+  align-items:center;
+  min-block-size:24px;
+  padding:0 6.5px;
+  font:inherit;
+  font-size:11px;
+  line-height:1;
+  border-radius:5px;
+  border:1px solid var(--chip-border);
+  background:var(--chip-bg);
+  color:var(--value);
+  cursor:pointer;
+  transition:background-color .14s ease,border-color .14s ease,color .14s ease,transform .14s ease;
+}
+.tool-chip[data-group="ui"]{
+  border-color:var(--ui-chip-border);
+  background:var(--ui-chip-bg);
+  color:#cceeff;
+}
+.tool-chip:hover{
+  background:rgba(184,146,255,.2);
+  border-color:var(--accent);
+  color:#fff;
+  transform:translateY(-1px);
+}
+.tool-chip[data-group="ui"]:hover{
+  background:rgba(124,212,255,.2);
+  border-color:var(--ui-accent);
+  color:#fff;
+}
+.tool-chip.is-copied,
+.tool-chip[data-group="ui"].is-copied{
+  border-color:#4ca687;
+  background:rgba(110,231,183,.16);
+  color:var(--ok);
+}
+
+/* 三步接入卡：使用 ol + role="list" 保留辅助技术列表语义 */
+.steps{
+  margin:0;
+  padding:0;
+  list-style:none;
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+.steps li{
+  padding:7px 10px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:var(--card);
+  min-width:0;
+}
+.step-top{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-bottom:2px;
+  font-size:11.5px;
+  font-weight:600;
+  color:#fff;
+}
+.step-num{
+  color:var(--accent);
+  font-weight:700;
+}
+.step-desc{
+  margin:0;
+  font-size:11px;
+  line-height:1.4;
+  color:var(--sub);
+}
+.step-desc code{
+  font-family:inherit;
+  color:var(--accent-hi);
+}
+
+/* 上手指令卡 */
+.cmdbox{
+  border:1px solid var(--border);
+  border-left:3px solid var(--accent);
+  border-radius:8px;
+  background:var(--card);
+  padding:8px 12px;
+}
+.cmd-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:5px;
+}
+.cmdbox .lab{
+  margin:0;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:1.2px;
+  color:var(--accent);
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.copy-btn{
+  flex:none;
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-block-size:24px;
+  padding:2px 10px;
+  font:inherit;
+  font-size:11.5px;
+  color:var(--value);
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:5px;
+  cursor:pointer;
+  transition:background-color .14s ease,border-color .14s ease,color .14s ease;
+}
+.copy-btn:hover{background:#251c40;border-color:var(--accent);color:#fff}
+.copy-btn.is-copied{border-color:#4ca687;background:rgba(110,231,183,.14);color:var(--ok)}
+.copy-btn svg{width:13px;height:13px;flex:none}
+.cmdbox #cmdtext{
+  margin:0;
+  font-size:11.5px;
+  line-height:1.58;
+  color:var(--text);
+}
+
+/* Windows 高对比度强制配色模式适配 */
+@media (forced-colors:active){
+  body{background-image:none}
+  .bar,.brand-col,.steps li,.cmdbox{border:1px solid CanvasText}
+  .ep-btn,.tool-chip,.copy-btn,.ver-badge,.status-pill,.count-pill{border:1px solid ButtonBorder}
+  .status-dot{background:Highlight;forced-color-adjust:none}
+  /* ANSI 色板属于实质语义信息，在强制配色模式下保留原色并补足边框 */
+  .palette i{forced-color-adjust:none;border:1px solid CanvasText}
+}
+
+/* 窄窗口响应式适配 */
 @media (max-width:700px){
+  .main{padding:12px 14px 16px;gap:12px}
+  .fetch{grid-template-columns:1fr;gap:12px}
+  .brand-col{flex-direction:row;justify-content:space-between;padding:10px 14px}
   .steps{grid-template-columns:1fr}
-  .fetch{gap:18px}
+  .tool-hint{white-space:normal}
 }
 </style>
 </head>
 <body>
-<div class="bar"><i></i><i></i><i></i><span>~/dev-bridge ❯ neofetch</span></div>
-<main class="main">
+<header class="bar">
+  <div class="bar-left">
+    <span class="bar-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="bar-path">~/dev-bridge ❯ neofetch</span>
+  </div>
+  <span class="status-pill"><span class="status-dot" aria-hidden="true"></span><span>MCP 保活中</span></span>
+</header>
 
-  <div class="fetch">
-    <pre class="art" aria-hidden="true">  /\            /\
+<main class="main">
+  <section class="fetch" aria-label="开发桥运行概览">
+    <div class="brand-col">
+      <pre class="art" aria-hidden="true">  /\            /\
  /  \          /  \
 /    \        /    \
 /      \____/      \
 ====================
 D E V ·  B R I D G E
 ~~~~~~~~~~~~~~~~~~~~</pre>
-    <div class="info">
-      <p class="host">bridge@utools</p>
-      <p class="rule">────────────────</p>
-      <p><span class="k">version</span><span><!-- GENERATED:META_VERSION:START -->0.4.0 · CommonJS 模块化<!-- GENERATED:META_VERSION:END --></span></p>
-      <p><span class="k">runtime</span><span>Electron 34 · Node 20</span></p>
-      <p><span class="k">sandbox</span><span>vm 沙箱 + 真窗口 · 副作用可还原</span></p>
-      <p><span class="k">gateway</span><span class="ep">127.0.0.1:3501/mcp</span></p>
-      <p><span class="k">mission</span><span>冷启动回退保活 · 保持后台即可</span></p>
-<!-- GENERATED:TOOLS_LINES:START -->
-      <p><span class="k">tools</span><span>dev_load dev_call dev_run dev_job</span></p>
-      <p><span class="k">　　　</span><span>dev_list dev_console dev_calls_log dev_cleanup</span></p>
-      <p><span class="k">　　　</span><span>dev_ui_open dev_ui_eval dev_ui_snapshot dev_ui_screenshot</span></p>
-      <p><span class="k">　　　</span><span>dev_ui_close</span></p>
-<!-- GENERATED:TOOLS_LINES:END -->
-      <p><span class="k">repo</span><a href="https://github.com/lililixxx1/utools-dev-bridge">github.com/lililixxx1/utools-dev-bridge</a></p>
-      <p><span class="k">skills</span><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-dev-bridge">utools-dev-bridge ↗</a> <span class="d">实测驾驶手册</span></p>
-      <p><span class="k">　　　</span><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-plugin-dev">utools-plugin-dev ↗</a> <span class="d">插件 API 参考</span></p>
-      <p class="rule">────────────────</p>
+      <p class="brand-sub">SANDBOX · UI BRIDGE</p>
       <p class="palette" aria-hidden="true">
         <i style="background:#ff5f87"></i><i style="background:#f78c6c"></i><i style="background:#ffcb6b"></i><i style="background:#c3e88d"></i>
         <i style="background:#89ddff"></i><i style="background:#82aaff"></i><i style="background:#c792ea"></i><i style="background:#6c7383"></i>
       </p>
     </div>
-  </div>
 
-  <div class="steps">
-    <p><b>01</b>uTools 设置 → 「AI Agent 连接」→ 复制 key</p>
-    <p><b>02</b>key 填入 agent 的 MCP 配置</p>
-    <p><b>03</b>对话中让 agent 调 dev_* 工具</p>
-  </div>
+    <div class="info">
+      <div class="host-row">
+        <h1 class="host">bridge<span class="at">@</span>utools</h1>
+        <span class="ver-badge"><!-- GENERATED:META_VERSION:START -->0.4.0 · CommonJS 模块化<!-- GENERATED:META_VERSION:END --></span>
+      </div>
 
-  <div class="cmdbox">
-    <p class="lab">» 上手指令 · 复制发给 AI agent</p>
-    <div class="row">
-      <p id="cmdtext" style="margin:0">请安装 uTools 开发桥配套技能：clone https://github.com/lililixxx1/utools-dev-bridge ，把 skills/ 下 utools-dev-bridge（插件实测手册）与 utools-plugin-dev（API 参考）装进你的技能目录；此后实测/调试 uTools 插件，用 uTools MCP 的 dev_* 工具按手册驱动。</p>
-      <button id="copybtn" type="button">[ copy ]</button>
+      <dl class="specs">
+        <dt>runtime</dt>
+        <dd>Electron 34 · Node 20</dd>
+
+        <dt>sandbox</dt>
+        <dd>vm 沙箱 + 真窗口 · 副作用可还原</dd>
+
+        <dt>gateway</dt>
+        <dd>
+          <button id="epbtn" type="button" class="ep-btn" data-copy="http://127.0.0.1:3501/mcp" aria-label="复制 MCP 网关地址 http://127.0.0.1:3501/mcp">
+            <span class="ep-text">127.0.0.1:3501/mcp</span>
+            <span class="ep-tag" aria-hidden="true">复制</span>
+          </button>
+        </dd>
+
+        <dt>mission</dt>
+        <dd>冷启动回退保活 · 保持后台即可</dd>
+
+        <dt>repo</dt>
+        <dd><a href="https://github.com/lililixxx1/utools-dev-bridge">github.com/lililixxx1/utools-dev-bridge <span aria-hidden="true">↗</span></a></dd>
+
+        <dt>skills</dt>
+        <dd class="skills-row">
+          <span class="skill-item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-dev-bridge">utools-dev-bridge <span aria-hidden="true">↗</span></a><span class="skill-desc">实测手册</span></span>
+          <span class="skill-item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-plugin-dev">utools-plugin-dev <span aria-hidden="true">↗</span></a><span class="skill-desc">API 参考</span></span>
+        </dd>
+      </dl>
+
+      <div class="tools-block">
+        <div class="tools-head">
+          <span class="tools-label">tools</span>
+          <span class="count-pill"><!-- GENERATED:TOOLS_COUNT:START -->13<!-- GENERATED:TOOLS_COUNT:END --></span>
+          <span id="tool-hint" class="tool-hint">悬停或聚焦工具查看用途，点击复制名称</span>
+        </div>
+        <div class="tools-list">
+<!-- GENERATED:TOOLS_LINES:START -->
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_load" data-summary="加载或热重载目标插件 preload">dev_load</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_call" data-summary="调用导出函数、生命周期或 __tool:&lt;名&gt;">dev_call</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_run" data-summary="单次背靠背执行多步调用与断言（可选加载与清理）">dev_run</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_job" data-summary="查询、等待或取消异步调用任务">dev_job</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_list" data-summary="查看当前加载状态、摘要清单与 UI 会话">dev_list</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_console" data-summary="增量读取 console 与异步未捕获异常">dev_console</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_calls_log" data-summary="增量读取 utools/fs/require 调用流水">dev_calls_log</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_cleanup" data-summary="逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用">dev_cleanup</button>
+          <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_open" data-summary="在真实 BrowserWindow 中加载目标插件 UI 与 preload">dev_ui_open</button>
+          <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_eval" data-summary="在 UI 窗口内执行 JS 或触发生命周期事件">dev_ui_eval</button>
+          <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_snapshot" data-summary="获取 UI 窗口的紧凑 DOM 与可访问性文本树">dev_ui_snapshot</button>
+          <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_screenshot" data-summary="截取 UI 窗口画面为 PNG 文件">dev_ui_screenshot</button>
+          <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_close" data-summary="关闭 UI 测试窗口并释放本地静态服务">dev_ui_close</button>
+<!-- GENERATED:TOOLS_LINES:END -->
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 
+  <ol class="steps" role="list" aria-label="快速接入步骤">
+    <li>
+      <div class="step-top"><span class="step-num">01</span><span>获取 Key</span></div>
+      <p class="step-desc">uTools 设置 →「AI Agent 连接」</p>
+    </li>
+    <li>
+      <div class="step-top"><span class="step-num">02</span><span>写入配置</span></div>
+      <p class="step-desc">Key 填入 Agent 的 MCP 配置</p>
+    </li>
+    <li>
+      <div class="step-top"><span class="step-num">03</span><span>驱动测试</span></div>
+      <p class="step-desc">对话中让 Agent 调 <code>dev_*</code> 工具</p>
+    </li>
+  </ol>
+
+  <section class="cmdbox" aria-labelledby="cmdbox-title">
+    <div class="cmd-head">
+      <h2 id="cmdbox-title" class="lab"><span aria-hidden="true">»</span> 上手指令 · 复制发给 AI agent</h2>
+      <button id="copybtn" type="button" class="copy-btn">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="5" width="9" height="9" rx="1.5"></rect>
+          <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"></path>
+        </svg>
+        <span id="copy-label">复制指令</span>
+      </button>
+    </div>
+    <p id="cmdtext">请安装 uTools 开发桥配套技能：clone https://github.com/lililixxx1/utools-dev-bridge ，把 skills/ 下 utools-dev-bridge（插件实测手册）与 utools-plugin-dev（API 参考）装进你的技能目录；此后实测/调试 uTools 插件，用 uTools MCP 的 dev_* 工具按手册驱动。</p>
+  </section>
 </main>
+
+<!-- 集中式礼貌状态播报区，用于向辅助技术通知复制成功或失败反馈 -->
+<div id="live-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+
 <script>
-// 链接点击经 preload 暴露的 window.utools 调系统浏览器打开(uTools 窗口内 a[target=_blank] 不保证生效);
-// 无 utools(如直接用浏览器打开本文件)时退化为默认新标签
+// 外链统一经 preload 暴露的 window.utools 调系统浏览器打开，独立浏览器预览时退化为新标签页
 document.addEventListener("click", function (e) {
   var a = e.target.closest ? e.target.closest("a[href^='http']") : null;
   if (!a) return;
@@ -122,18 +610,138 @@ document.addEventListener("click", function (e) {
   if (window.utools && utools.shellOpenExternal) utools.shellOpenExternal(a.href);
   else window.open(a.href, "_blank");
 });
-// 上手指令一键复制:优先真实 utools.copyText;浏览器环境退化 navigator.clipboard,失败如实提示
-document.getElementById("copybtn").addEventListener("click", function () {
-  var btn = this, text = document.getElementById("cmdtext").textContent;
-  var p = (window.utools && utools.copyText)
-    ? Promise.resolve().then(function () { utools.copyText(text); })
-    : (navigator.clipboard && navigator.clipboard.writeText)
-      ? navigator.clipboard.writeText(text)
-      : Promise.reject();
-  p.then(function () { btn.textContent = "已复制 ✓"; },
-        function () { btn.textContent = "复制失败"; });
-  setTimeout(function () { btn.textContent = "[ copy ]"; }, 2200);
-});
+
+// 统一剪贴板写入：优先使用 uTools 原生 copyText，普通浏览器环境回退 navigator.clipboard
+function copyText(text) {
+  if (window.utools && utools.copyText) {
+    return Promise.resolve().then(function () { utools.copyText(text); });
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return Promise.reject(new Error("CLIPBOARD_UNAVAILABLE"));
+}
+
+var liveEl = document.getElementById("live-status");
+function announce(msg) {
+  if (!liveEl) return;
+  liveEl.textContent = "";
+  setTimeout(function () { liveEl.textContent = msg; }, 20);
+}
+
+// 一键复制上手指令
+(function () {
+  var btn = document.getElementById("copybtn");
+  var label = document.getElementById("copy-label");
+  var timer = null;
+  btn.addEventListener("click", function () {
+    var text = document.getElementById("cmdtext").textContent;
+    clearTimeout(timer);
+    copyText(text).then(function () {
+      btn.classList.add("is-copied");
+      label.textContent = "已复制 ✓";
+      announce("已复制上手指令到剪贴板");
+    }, function () {
+      btn.classList.remove("is-copied");
+      label.textContent = "复制失败";
+      announce("复制上手指令失败");
+    });
+    timer = setTimeout(function () {
+      btn.classList.remove("is-copied");
+      label.textContent = "复制指令";
+    }, 2200);
+  });
+})();
+
+// 一键复制 MCP 网关地址
+(function () {
+  var btn = document.getElementById("epbtn");
+  var tag = btn.querySelector(".ep-tag");
+  var timer = null;
+  btn.addEventListener("click", function () {
+    var url = btn.getAttribute("data-copy");
+    clearTimeout(timer);
+    copyText(url).then(function () {
+      btn.classList.add("is-copied");
+      tag.textContent = "✓ 已复制";
+      announce("已复制网关地址 " + url);
+    }, function () {
+      btn.classList.remove("is-copied");
+      tag.textContent = "失败";
+      announce("复制网关地址失败");
+    });
+    timer = setTimeout(function () {
+      btn.classList.remove("is-copied");
+      tag.textContent = "复制";
+    }, 2000);
+  });
+})();
+
+// 工具芯片交互：悬停/聚焦展示单行用途摘要，点击复制工具名
+(function () {
+  var list = document.querySelector(".tools-list");
+  var hint = document.getElementById("tool-hint");
+  var defaultHint = hint.textContent;
+  var activeChip = null;
+  var copiedTimer = null;
+
+  function showSummary(btn) {
+    if (!btn) return;
+    activeChip = btn;
+    var name = btn.getAttribute("data-tool");
+    var summary = btn.getAttribute("data-summary");
+    hint.textContent = name + " — " + summary;
+    hint.classList.add("is-active");
+    hint.classList.remove("is-copied");
+  }
+
+  function resetSummary() {
+    activeChip = null;
+    hint.textContent = defaultHint;
+    hint.classList.remove("is-active", "is-copied");
+  }
+
+  list.addEventListener("mouseover", function (e) {
+    var btn = e.target.closest ? e.target.closest(".tool-chip") : null;
+    if (btn) showSummary(btn);
+  });
+  list.addEventListener("mouseout", function (e) {
+    if (!list.contains(e.relatedTarget)) resetSummary();
+  });
+  list.addEventListener("focusin", function (e) {
+    var btn = e.target.closest ? e.target.closest(".tool-chip") : null;
+    if (btn) showSummary(btn);
+  });
+  list.addEventListener("focusout", function (e) {
+    if (!list.contains(e.relatedTarget)) resetSummary();
+  });
+
+  list.addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest(".tool-chip") : null;
+    if (!btn) return;
+    var name = btn.getAttribute("data-tool");
+    clearTimeout(copiedTimer);
+    var prev = list.querySelector(".tool-chip.is-copied");
+    if (prev && prev !== btn) prev.classList.remove("is-copied");
+
+    copyText(name).then(function () {
+      btn.classList.add("is-copied");
+      hint.textContent = "已复制 " + name + " ✓";
+      hint.classList.add("is-copied");
+      hint.classList.remove("is-active");
+      announce("已复制工具名 " + name);
+    }, function () {
+      hint.textContent = "复制 " + name + " 失败";
+      announce("复制工具名失败");
+    });
+
+    copiedTimer = setTimeout(function () {
+      btn.classList.remove("is-copied");
+      if (activeChip === btn) showSummary(btn);
+      else resetSummary();
+    }, 1800);
+  });
+})();
 </script>
 </body>
 </html>
