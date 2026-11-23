@@ -123,6 +123,7 @@ function createRunTool(rt, loadApi, callApi, cleanupApi) {
           exportsHash: lr.exportsHash,
           warnings: lr.warnings,
         };
+        if (lr.riskNotice) loadSummary.riskNotice = lr.riskNotice;
       } catch (e) {
         return {
           ok: false,

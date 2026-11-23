@@ -27,18 +27,18 @@
 <!-- GENERATED:TOOLS_TABLE:START -->
 | 工具 | 用途 | 关键参数 |
 | --- | --- | --- |
-| `dev_load` | 加载或热重载目标插件 preload | `path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`verbose` |
+| `dev_load` | 加载或热重载目标插件 preload | `path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`confirmRisk`、`verbose` |
 | `dev_call` | 调用导出函数、生命周期或 __tool:<名> | `name`（必）、`args`、`include`、`async`、`timeoutMs` |
 | `dev_run` | 单次背靠背执行多步调用与断言（可选加载与清理） | `steps`（必）、`load`、`stopOnFail`、`cleanup` |
 | `dev_job` | 查询、等待或取消异步调用任务 | `id`、`waitMs`、`cancel` |
 | `dev_list` | 查看当前加载状态、摘要清单与 UI 会话 | `verbose` |
 | `dev_console` | 增量读取 console 与异步未捕获异常 | `since`、`clear` |
 | `dev_calls_log` | 增量读取 utools/fs/require 调用流水 | `since`、`clear` |
-| `dev_cleanup` | 逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用 | `force`、`dropAll` |
-| `dev_ui_open` | 在真实 BrowserWindow 中加载目标插件 UI 与 preload | `path`、`width`、`height`、`show`、`serveHttp`、`enter` |
+| `dev_cleanup` | 逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用并清理 UI 缓存 | `force`、`dropAll` |
+| `dev_ui_open` | 在真实 BrowserWindow 中加载目标插件 UI 与 preload | `path`、`width`、`height`、`show`、`serveHttp`、`enter`、`confirmRisk` |
 | `dev_ui_eval` | 在 UI 窗口内执行 JS 或触发生命周期事件 | `js`、`lifecycle`、`args`、`include`、`awaitPromise` |
 | `dev_ui_snapshot` | 获取 UI 窗口的紧凑 DOM 与可访问性文本树 | `selector`、`maxDepth`、`maxNodes`、`includeHidden` |
-| `dev_ui_screenshot` | 截取 UI 窗口画面为 PNG 文件 | `outPath`、`rect`、`returnBase64` |
+| `dev_ui_screenshot` | 截取 UI 窗口画面为 PNG 文件 | `outPath`、`confirmOutPath`、`rect`、`returnBase64` |
 | `dev_ui_close` | 关闭 UI 测试窗口并释放本地静态服务 | 无 |
 <!-- GENERATED:TOOLS_TABLE:END -->
 
@@ -82,14 +82,16 @@ dev_cleanup                                           # 连同 UI 窗口产生�
 **定位口径：门控是"防意外"的卫生措施，不是安全边界。** `vm` 沙箱注入了宿主对象（`Buffer`/timers 等），蓄意代码可经 `Buffer.constructor("return process")()` 逃逸——永远堵不完，也不试图堵。`dev_*` 等价于**本机任意代码执行 + 任意路径读取**；3501 仅绑回环，`x-mcp-key` 即边界，key 不入任何仓库或笔记。
 
 - **默认凭证脱敏**：`utools.getNativeId`、`utools.getUser`、`utools.getUserServerTemporaryToken`、`dbCryptoStorage.*`、键名/字段命中敏感词（`token`/`secret`/`password`/`apiKey` 等）以及命中敏感词的导出函数返回值，在 `dev_console`、`dev_calls_log` 与 `dev_call` 返回中默认替换为 `<redacted len=...>`；`dev_load`/`dev_ui_open` 传 `reveal:true` 可查看原值。**写日志前态（`journal`）绝不脱敏**，保证 `dev_cleanup` 还原真实值。
-- **破坏性 utools API 默认 stub**（剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/`outPlugin`/定时任务创建删除等），`requestSchedule` stub 保 thenable；确需真执行才 `allowSideEffects:true`。
+- **高危开关二次确认（`confirmRisk: true`）**：启用 `allowSideEffects: true`、`allowHostModules: true` / 非空数组或 `reveal: true` 时，`dev_load`、`dev_run.load`、`dev_ui_open` 默认返回 `CONFIRM_REQUIRED` 并说明对应风险；向用户说明风险并显式传 `confirmRisk: true` 后方可执行，且返回载荷会附带 `riskNotice`。
+- **破坏性 utools API 默认 stub**（剪贴板/键鼠模拟/shell/通知/录屏/窗口/AI 计费/`outPlugin`/定时任务创建删除等），`requestSchedule` stub 保 thenable；确需真执行才 `allowSideEffects:true` + `confirmRisk:true`。
 - **Node 内置模块白名单门控**（`node:` 前缀已规范化）：
   | 类别 | 模块 | 行为 |
   | --- | --- | --- |
   | map（安全替身） | `process`/`console`/`timers`/`timers/promises`/`fs`/`fs/promises`/`module` | shim：`process` 白名单、`timers` 走 libuv 通道、`fs` 写日志、`module.createRequire` 封闭回 loader |
   | allow（透传） | `path`/`os`/`util`/`events`/`assert`/`crypto`/`url`/`zlib`/`stream` 等只读系 | 原样透传 |
-  | 默认拒绝 | `child_process`/`worker_threads`/`cluster`/`http(s)`/`http2`/`net`/`dgram`/`tls`/`dns`/`inspector`/`vm`/`v8`/`repl`/`readline`/`electron` 及未列入白名单的一切 | **懒拒绝**：import 不炸（事件注册族 noop 可链式），真正调用时抛 `DENIED_MODULE`；`allowHostModules:true` 或白名单数组放行 |
+  | 默认拒绝 | `child_process`/`worker_threads`/`cluster`/`http(s)`/`http2`/`net`/`dgram`/`tls`/`dns`/`inspector`/`vm`/`v8`/`repl`/`readline`/`electron` 及未列入白名单的一切 | **懒拒绝**：import 不炸（事件注册族 noop 可链式），真正调用时抛 `DENIED_MODULE`；`allowHostModules:true` 或白名单数组（配 `confirmRisk:true`）放行 |
 - **fetch 默认拦截**（rejected Promise，`code=DENIED_FETCH`）；沙箱已补齐 `URL`/`TextEncoder`/`AbortController` 等 web 全局。`.node` 原生模块透传绕过门控。
+- **截图与会话清理**：`dev_ui_screenshot` 默认限制保存在会话目录 `devbridge-shots/`，传入超出该目录的 `outPath` 须同时传 `confirmOutPath: true` 二次确认；`dev_cleanup` 会一并清理 `devbridge-shots/` 与非活跃 `devbridge-ui-session.json`。
 - **db / dbStorage / dbCryptoStorage / fs 还原契约**：
   - WAL 前态先落盘 **`getPluginLocalDataPath()/devbridge-spill/`**（NDJSON 增量追加，旧 `temp` 目录或 `journal.json` 启动自动迁移，遗留 >7 天按弃置会话整体清空并置 `spillWiped:true`）。
   - fs 单文件上限 8MB、目录快照上限 500 文件、spill 总量 64MB：破坏性操作前态超限默认拒绝（`DENIED_FS_UNTRACKED`），写类超限放行但标 `untracked`；**越出目标插件根目录的 fs 写会在流水标 `outside:true`，并在 `dev_cleanup` 返回 `outsideWrites` 清单**。
@@ -119,6 +121,7 @@ dev_cleanup                                           # 连同 UI 窗口产生�
 | `UI_NOT_OPEN` | 尚未打开测试 UI 窗口；先调用 dev_ui_open |
 | `UI_UNAVAILABLE` | 当前宿主环境不支持 utools.createBrowserWindow |
 | `UI_EVAL_FAILED` | UI 窗口内执行 JS/生命周期或生成快照失败 |
+| `CONFIRM_REQUIRED` | 触发高危开关（allowSideEffects/allowHostModules/reveal）或越出会话目录写截图，需显式传 confirmRisk:true 或 confirmOutPath:true 二次确认 |
 | `BOOT_FAILED` | 开发桥自身启动崩溃，仅暴露 dev_boot_err 诊断工具 |
 <!-- GENERATED:ERROR_CODES:END -->
 
@@ -133,9 +136,12 @@ dev_cleanup                                           # 连同 UI 窗口产生�
 npm test                                    # 运行 node:test 全套测试（零依赖）
 node scripts/gen-docs.js --check            # 校验契约、plugin.json、README、SKILL 一致性
 node scripts/bench-workflow.js              # 对比旧多轮往返 vs 新内联/批量往返效率
-node scripts/pack-stage.js --dry-run        # 预览最小分发打包目录（仅 plugin.json/logo/html/preload）
+npm run pack                                # 生成纯净发行目录 dist/（仅 plugin.json/logo/html/preload）
+node scripts/pack-stage.js --dry-run        # 预览最小分发打包清单
 UTOOLS_MCP_KEY=<key> node scripts/rt-run.js # 真机回归（需 uTools 已装并重载新版桥）
 ```
+
+> **发布打包规范**：提交 uTools 插件商店或导出 `.upx` 前请先运行 `npm run pack`，在 uTools 开发者工具中加载/打包 **`dist/`** 目录，**勿直接打包仓库根目录**（`dist/` 已自动排除 `test/`、`scripts/`、`skills/`、`docs/` 与根 `package.json` 并通过完整性自检）。
 
 | 路径 | 说明 |
 | --- | --- |

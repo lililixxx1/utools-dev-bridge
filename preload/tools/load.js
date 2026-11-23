@@ -13,21 +13,51 @@ function toolsList(gen) {
   }));
 }
 
+function collectHighRiskFlags(cfg) {
+  const risks = [];
+  if (!cfg) return risks;
+  if (cfg.allowSideEffects === true) {
+    risks.push("allowSideEffects:true（放行剪贴板、键鼠模拟、shell、系统弹窗、AI 计费等破坏性 utools API）");
+  }
+  if (cfg.allowHostModules === true) {
+    risks.push("allowHostModules:true（放行全部 Node 高危内置模块含 child_process/net/http/electron、fetch 及超限破坏性 fs 操作）");
+  } else if (Array.isArray(cfg.allowHostModules) && cfg.allowHostModules.length > 0) {
+    risks.push("allowHostModules:" + JSON.stringify(cfg.allowHostModules) + "（放行指定宿主/Node 内置模块）");
+  }
+  if (cfg.reveal === true) {
+    risks.push("reveal:true（关闭日志与返回值的自动凭证脱敏，明文暴露密钥/令牌/原生 ID）");
+  }
+  return risks;
+}
+
+function assertHighRiskConfirmed(rt, cfg) {
+  const risks = collectHighRiskFlags(cfg);
+  if (risks.length > 0 && !(cfg && cfg.confirmRisk === true)) {
+    throw rt.err(
+      "CONFIRM_REQUIRED",
+      "检测到高危开关，启用前需二次确认（请向用户说明风险并显式传 confirmRisk: true）：" + risks.join("；")
+    );
+  }
+  return risks;
+}
+
 function createLoadTools(rt, loaderApi) {
   function devLoad(cfg) {
+    const safeCfg = cfg || {};
+    const risks = assertHighRiskConfirmed(rt, safeCfg);
     const callsBefore = rt.callsSeq;
-    const gen = loaderApi.buildGeneration(cfg || {});
+    const gen = loaderApi.buildGeneration(safeCfg);
     if (rt.CURRENT_GEN) rt.CURRENT_GEN.retired = true;
     killTimers(rt.CURRENT_GEN);
     rt.CURRENT_GEN = gen;
 
     rt.persistLast({
-      path: cfg.path,
-      mode: cfg.mode || "plugin",
-      allowSideEffects: !!cfg.allowSideEffects,
-      allowHostModules: cfg.allowHostModules === undefined ? false : cfg.allowHostModules,
-      reveal: !!cfg.reveal,
-      timeoutMs: cfg.timeoutMs,
+      path: safeCfg.path,
+      mode: safeCfg.mode || "plugin",
+      allowSideEffects: !!safeCfg.allowSideEffects,
+      allowHostModules: safeCfg.allowHostModules === undefined ? false : safeCfg.allowHostModules,
+      reveal: !!safeCfg.reveal,
+      timeoutMs: safeCfg.timeoutMs,
     });
 
     const deniedMods = new Set();
@@ -45,8 +75,11 @@ function createLoadTools(rt, loaderApi) {
     if (rt.spill.wiped) {
       gen.warnings.push("上次遗留 spill 已超 7 天,启动时按弃置会话整体清空(如需保留现场请缩短测试与还原间隔)");
     }
+    if (risks.length) {
+      gen.warnings.push("高危开关已按 confirmRisk 放行: " + risks.join("；"));
+    }
 
-    return {
+    const out = {
       ok: true,
       entry: gen.entry,
       targetRoot: gen.targetRoot,
@@ -57,12 +90,14 @@ function createLoadTools(rt, loaderApi) {
       loadedAt: gen.loadedAt,
       exportsCount: gen.manifest.length,
       exportsHash: gen.exportsHash,
-      exports: formatManifest(gen.manifest, !!(cfg && cfg.verbose)),
+      exports: formatManifest(gen.manifest, !!(safeCfg && safeCfg.verbose)),
       events: gen.eventsList,
       tools: toolsList(gen),
       warnings: gen.warnings,
       hint: "用 dev_call/dev_run 执行清单导出;name=__enter 可触发 onPluginEnter;UI 插件可用 dev_ui_open",
     };
+    if (risks.length) out.riskNotice = risks;
+    return out;
   }
 
   function devList(cfg) {
@@ -121,4 +156,4 @@ function createLoadTools(rt, loaderApi) {
   return { devLoad, devList, toolsList };
 }
 
-module.exports = { createLoadTools, toolsList };
+module.exports = { createLoadTools, toolsList, collectHighRiskFlags, assertHighRiskConfirmed };

@@ -20,12 +20,24 @@ function collectOutsideWrites(journal) {
   return out;
 }
 
-function createCleanupTool(rt, journalApi, getUiFlush) {
-  async function devCleanup(cfg) {
-    const flushFn = typeof getUiFlush === "function" ? getUiFlush() : null;
-    if (flushFn) {
-      try { await flushFn(); } catch (_) {}
+function createCleanupTool(rt, journalApi, uiHooks) {
+  const flushSession = async () => {
+    const fn = typeof uiHooks === "function"
+      ? uiHooks()
+      : (uiHooks && typeof uiHooks.flushSession === "function" ? uiHooks.flushSession : null);
+    if (typeof fn === "function") {
+      try { await fn(); } catch (_) {}
     }
+  };
+  const cleanupUi = () => {
+    if (uiHooks && typeof uiHooks.cleanupUiArtifacts === "function") {
+      try { return uiHooks.cleanupUiArtifacts() || { shotsCleaned: 0, sessionCleaned: false }; } catch (_) {}
+    }
+    return { shotsCleaned: 0, sessionCleaned: false };
+  };
+
+  async function devCleanup(cfg) {
+    await flushSession();
 
     const REAL = rt.REAL;
     const force = !!(cfg && cfg.force);
@@ -33,6 +45,7 @@ function createCleanupTool(rt, journalApi, getUiFlush) {
     const stats = {
       dbRestore: 0, dbDelete: 0, kvRestore: 0, kvDelete: 0,
       kvCryptoRestore: 0, kvCryptoDelete: 0, attachment: 0, fsRestore: 0,
+      uiShotsCleaned: 0, uiSessionCleaned: 0,
     };
     const failures = [];
     const untracked = [];
@@ -50,6 +63,9 @@ function createCleanupTool(rt, journalApi, getUiFlush) {
       journalApi.cleanupSpillDir();
       rt.spill.pendingRestore = 0;
       rt.spill.truncated = false;
+      const uiClean = cleanupUi();
+      stats.uiShotsCleaned += uiClean.shotsCleaned || 0;
+      if (uiClean.sessionCleaned) stats.uiSessionCleaned += 1;
       const out = {
         ok: true,
         restored: stats,
@@ -160,12 +176,15 @@ function createCleanupTool(rt, journalApi, getUiFlush) {
       journalApi.rewriteJournalFile();
     }
     killTimers(rt.CURRENT_GEN);
+    const uiClean = cleanupUi();
+    stats.uiShotsCleaned += uiClean.shotsCleaned || 0;
+    if (uiClean.sessionCleaned) stats.uiSessionCleaned += 1;
 
     const out = {
       ok: true,
       restored: stats,
       failures,
-      note: "网络/进程副作用不在回收范围;fs 前态已按写日志还原(超限项见 untracked)",
+      note: "网络/进程副作用不在回收范围;fs 前态已按写日志还原(超限项见 untracked);已清理会话目录截图与非活跃 UI 会话文件",
     };
     if (untracked.length) out.untracked = untracked;
     if (outsideWrites.length) out.outsideWrites = outsideWrites;

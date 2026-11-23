@@ -10,6 +10,7 @@
     "docs:check": "node scripts/gen-docs.js --check",
     "rt": "node scripts/rt-run.js",
     "bench": "node scripts/bench-workflow.js",
+    "pack": "node scripts/pack-stage.js",
     "pack:stage": "node scripts/pack-stage.js --dry-run"
   }
 }

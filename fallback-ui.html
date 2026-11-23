@@ -137,8 +137,8 @@ body{
   display:flex;
   flex-direction:column;
   justify-content:space-between;
-  gap:10px;
-  padding:12px 20px 13px;
+  gap:8px;
+  padding:10px 20px 11px;
 }
 
 /* Neofetch 主视图：左桥徽标 + 右实时规格与工具面板 */
@@ -257,6 +257,8 @@ body{
 }
 .skill-item{display:inline-flex;align-items:center;gap:6px}
 .skill-desc{color:var(--dim);font-size:11.5px}
+.safety-note{font-size:11px;line-height:1.4;color:var(--sub)}
+.safety-note code{font-family:inherit;color:#fcd34d}
 
 /* 可点击复制的 MCP 网关芯片 */
 .ep-btn{
@@ -539,6 +541,9 @@ D E V ·  B R I D G E
           <span class="skill-item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-dev-bridge">utools-dev-bridge <span aria-hidden="true">↗</span></a><span class="skill-desc">实测手册</span></span>
           <span class="skill-item"><a href="https://github.com/lililixxx1/utools-dev-bridge/tree/main/skills/utools-plugin-dev">utools-plugin-dev <span aria-hidden="true">↗</span></a><span class="skill-desc">API 参考</span></span>
         </dd>
+
+        <dt>safety</dt>
+        <dd class="safety-note">高危开关 <code>allowSideEffects</code>（键鼠/剪贴板/shell）、<code>allowHostModules</code>（Node 内置模块）与 <code>reveal</code>（关闭脱敏）默认关闭，需传 <code>confirmRisk:true</code> 二次确认</dd>
       </dl>
 
       <div class="tools-block">
@@ -556,7 +561,7 @@ D E V ·  B R I D G E
           <button type="button" class="tool-chip" data-group="core" data-tool="dev_list" data-summary="查看当前加载状态、摘要清单与 UI 会话">dev_list</button>
           <button type="button" class="tool-chip" data-group="core" data-tool="dev_console" data-summary="增量读取 console 与异步未捕获异常">dev_console</button>
           <button type="button" class="tool-chip" data-group="core" data-tool="dev_calls_log" data-summary="增量读取 utools/fs/require 调用流水">dev_calls_log</button>
-          <button type="button" class="tool-chip" data-group="core" data-tool="dev_cleanup" data-summary="逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用">dev_cleanup</button>
+          <button type="button" class="tool-chip" data-group="core" data-tool="dev_cleanup" data-summary="逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用并清理 UI 缓存">dev_cleanup</button>
           <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_open" data-summary="在真实 BrowserWindow 中加载目标插件 UI 与 preload">dev_ui_open</button>
           <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_eval" data-summary="在 UI 窗口内执行 JS 或触发生命周期事件">dev_ui_eval</button>
           <button type="button" class="tool-chip" data-group="ui" data-tool="dev_ui_snapshot" data-summary="获取 UI 窗口的紧凑 DOM 与可访问性文本树">dev_ui_snapshot</button>

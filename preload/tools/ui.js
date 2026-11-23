@@ -17,6 +17,7 @@ const { ser } = require("../serialize");
 const { isOutsideTarget } = require("../journal");
 const { resolvePluginManifest } = require("../loader");
 const { attachInlineLogs } = require("./call");
+const { assertHighRiskConfirmed } = require("./load");
 
 const MIME_MAP = {
   ".html": "text/html; charset=utf-8",
@@ -204,6 +205,7 @@ function createUiTools(rt, journalApi) {
     if (!manifest.mainPath || !fs.existsSync(manifest.mainPath)) {
       throw rt.err("NO_MAIN", "目标 plugin.json 未声明有效的 main HTML 入口");
     }
+    const risks = assertHighRiskConfirmed(rt, cfg || {});
     const preloadPath = manifest.preloadPath && fs.existsSync(manifest.preloadPath) ? manifest.preloadPath : null;
 
     await closeActiveSession();
@@ -339,6 +341,7 @@ function createUiTools(rt, journalApi) {
         consoleTo: rt.consoleSeq,
         callsTo: rt.callsSeq,
       };
+      if (risks.length) out.riskNotice = risks;
       return attachInlineLogs(out, rt, consoleFrom, callsFrom, undefined, true);
     } catch (e) {
       await closeActiveSession();
@@ -442,13 +445,24 @@ function createUiTools(rt, journalApi) {
 
   async function devUiScreenshot(cfg) {
     const s = getOpenSession();
+    const shotsDir = path.join(resolveSessionDir(), "devbridge-shots");
+    const outPath = (cfg && cfg.outPath)
+      ? path.resolve(String(cfg.outPath))
+      : path.join(shotsDir, "shot-" + Date.now() + ".png");
+    const sameAsShotsDir = process.platform === "win32"
+      ? outPath.toLowerCase() === path.resolve(shotsDir).toLowerCase()
+      : outPath === path.resolve(shotsDir);
+    const outsideShots = isOutsideTarget(shotsDir, outPath) || sameAsShotsDir;
+    if (outsideShots && !(cfg && cfg.confirmOutPath === true)) {
+      throw rt.err(
+        "CONFIRM_REQUIRED",
+        "outPath 超出会话截图目录(" + shotsDir + ")，目标路径: " + outPath + "；如确认写入该路径，请显式传 confirmOutPath: true"
+      );
+    }
+
     const img = cfg && cfg.rect ? await s.win.capturePage(cfg.rect) : await s.win.capturePage();
     const buf = Buffer.isBuffer(img) ? img : img.toPNG();
     const size = img && typeof img.getSize === "function" ? img.getSize() : { width: null, height: null };
-    const shotsDir = path.join(resolveSessionDir(), "devbridge-shots");
-    const outPath = (cfg && cfg.outPath)
-      ? path.resolve(cfg.outPath)
-      : path.join(shotsDir, "shot-" + Date.now() + ".png");
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, buf);
 
@@ -459,12 +473,40 @@ function createUiTools(rt, journalApi) {
       width: size.width,
       height: size.height,
     };
+    if (outsideShots) {
+      out.outsideSessionDir = true;
+      out.riskNotice = "截图已按 confirmOutPath 写入会话目录之外，dev_cleanup 不会自动清理该文件";
+    }
     if (cfg && cfg.returnBase64) {
       out.dataUrl = img && typeof img.toDataURL === "function"
         ? img.toDataURL()
         : "data:image/png;base64," + buf.toString("base64");
     }
     return out;
+  }
+
+  function cleanupUiArtifacts() {
+    const sessionDir = resolveSessionDir();
+    const shotsDir = path.join(sessionDir, "devbridge-shots");
+    let shotsCleaned = 0;
+    if (fs.existsSync(shotsDir)) {
+      try {
+        shotsCleaned = fs.readdirSync(shotsDir).length;
+      } catch (_) {}
+      try { fs.rmSync(shotsDir, { recursive: true, force: true }); } catch (_) {}
+    }
+    const hasActiveWin = !!(rt.uiSession && rt.uiSession.win && (!rt.uiSession.win.isDestroyed || !rt.uiSession.win.isDestroyed()));
+    let sessionCleaned = false;
+    if (!hasActiveWin) {
+      const sessionFile = path.join(sessionDir, "devbridge-ui-session.json");
+      if (fs.existsSync(sessionFile)) {
+        try {
+          fs.unlinkSync(sessionFile);
+          sessionCleaned = true;
+        } catch (_) {}
+      }
+    }
+    return { shotsCleaned, sessionCleaned };
   }
 
   async function devUiClose() {
@@ -479,6 +521,7 @@ function createUiTools(rt, journalApi) {
     devUiScreenshot,
     devUiClose,
     flushSession,
+    cleanupUiArtifacts,
   };
 }
 

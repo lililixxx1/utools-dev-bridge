@@ -31,7 +31,10 @@
     const loadApi = createLoadTools(rt, loaderApi);
     const callApi = createCallTools(rt, loaderApi, proxyApi, jobMgr);
     const uiApi = createUiTools(rt, journalApi);
-    const cleanupApi = createCleanupTool(rt, journalApi, () => uiApi.flushSession);
+    const cleanupApi = createCleanupTool(rt, journalApi, {
+      flushSession: () => uiApi.flushSession(),
+      cleanupUiArtifacts: () => uiApi.cleanupUiArtifacts(),
+    });
     const runApi = createRunTool(rt, loadApi, callApi, cleanupApi);
 
     // 启动回灌上次未还原的写日志，跨 uTools 重启仍可 dev_cleanup

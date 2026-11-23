@@ -60,8 +60,10 @@ dev_cleanup {}                                        # 逆序还原 db/kv/fs �
   - `__dbPull`: `args=[[doc1, doc2, ...]]`（注意参数本身是一个文档数组，传进 `args` 就是嵌套二维数组）
   - `__ready`: `args=[]`；`__schedule`: `args=[{code}]`
   - 同一生命周期注册了多个回调时，`dev_call` 会顺序执行并逐个 `await`，返回结果数组。
-- **凭证自动脱敏**：`getNativeId`、`getUser`、`dbCryptoStorage.*`、敏感 kv 键及敏感字段在返回值与日志里默认显示为 `<redacted len=N>`；仅确需验证原文时传 `dev_load {reveal:true}` 或 `dev_ui_open {reveal:true}`。绝不把真实密钥写进文件或输出。
-- **门控放行**：顶层 `require` 被拦时（`REQUIRE_FAILED` 且含 `require:xxx`），用 `dev_load {allowHostModules:["http"]}` 或 `true` 放行；破坏性 utools API 确需真执行才 `allowSideEffects:true`。
+- **凭证自动脱敏**：`getNativeId`、`getUser`、`dbCryptoStorage.*`、敏感 kv 键及敏感字段在返回值与日志里默认显示为 `<redacted len=N>`；仅确需验证原文时传 `reveal:true` + `confirmRisk:true`。绝不把真实密钥写进文件或输出。
+- **高危开关二次确认（`confirmRisk: true`）**：`allowSideEffects: true`、`allowHostModules: true` / 非空数组与 `reveal: true` 触发 `CONFIRM_REQUIRED`；必须先告知用户风险并显式传 `confirmRisk: true` 方可放行。
+- **截图目录与清理**：`dev_ui_screenshot` 默认将 PNG 写入会话目录 `devbridge-shots/`，传入超出该目录的 `outPath` 须同时传 `confirmOutPath: true`；`dev_cleanup` 会同步清理 `devbridge-shots/` 与非活跃 `devbridge-ui-session.json`。
+- **门控放行**：顶层 `require` 被拦时（`REQUIRE_FAILED` 且含 `require:xxx`），向用户说明风险并用 `dev_load {allowHostModules:["http"], confirmRisk:true}` 或 `allowHostModules:true, confirmRisk:true` 放行；破坏性 utools API 确需真执行才 `allowSideEffects:true, confirmRisk:true`。
 - **MCP 客户端缓存旧 schema 时**：用环境变量 `UTOOLS_MCP_KEY` + `node <桥仓库>/scripts/gw-call.js <工具名> '<json>'` 直连网关绕过客户端缓存。
 - **越出目标目录的 fs 写入**：若被测插件往目标根目录之外写了文件，流水条目会标 `outside:true`，`dev_cleanup` 会在 `outsideWrites` 单列。
 
@@ -70,18 +72,18 @@ dev_cleanup {}                                        # 逆序还原 db/kv/fs �
 <!-- GENERATED:TOOLS_TABLE:START -->
 | 工具 | 用途 | 关键参数 |
 | --- | --- | --- |
-| `dev_load` | 加载或热重载目标插件 preload | `path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`verbose` |
+| `dev_load` | 加载或热重载目标插件 preload | `path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`confirmRisk`、`verbose` |
 | `dev_call` | 调用导出函数、生命周期或 __tool:<名> | `name`（必）、`args`、`include`、`async`、`timeoutMs` |
 | `dev_run` | 单次背靠背执行多步调用与断言（可选加载与清理） | `steps`（必）、`load`、`stopOnFail`、`cleanup` |
 | `dev_job` | 查询、等待或取消异步调用任务 | `id`、`waitMs`、`cancel` |
 | `dev_list` | 查看当前加载状态、摘要清单与 UI 会话 | `verbose` |
 | `dev_console` | 增量读取 console 与异步未捕获异常 | `since`、`clear` |
 | `dev_calls_log` | 增量读取 utools/fs/require 调用流水 | `since`、`clear` |
-| `dev_cleanup` | 逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用 | `force`、`dropAll` |
-| `dev_ui_open` | 在真实 BrowserWindow 中加载目标插件 UI 与 preload | `path`、`width`、`height`、`show`、`serveHttp`、`enter` |
+| `dev_cleanup` | 逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用并清理 UI 缓存 | `force`、`dropAll` |
+| `dev_ui_open` | 在真实 BrowserWindow 中加载目标插件 UI 与 preload | `path`、`width`、`height`、`show`、`serveHttp`、`enter`、`confirmRisk` |
 | `dev_ui_eval` | 在 UI 窗口内执行 JS 或触发生命周期事件 | `js`、`lifecycle`、`args`、`include`、`awaitPromise` |
 | `dev_ui_snapshot` | 获取 UI 窗口的紧凑 DOM 与可访问性文本树 | `selector`、`maxDepth`、`maxNodes`、`includeHidden` |
-| `dev_ui_screenshot` | 截取 UI 窗口画面为 PNG 文件 | `outPath`、`rect`、`returnBase64` |
+| `dev_ui_screenshot` | 截取 UI 窗口画面为 PNG 文件 | `outPath`、`confirmOutPath`、`rect`、`returnBase64` |
 | `dev_ui_close` | 关闭 UI 测试窗口并释放本地静态服务 | 无 |
 <!-- GENERATED:TOOLS_TABLE:END -->
 
@@ -109,5 +111,6 @@ dev_cleanup {}                                        # 逆序还原 db/kv/fs �
 | `UI_NOT_OPEN` | 尚未打开测试 UI 窗口；先调用 dev_ui_open |
 | `UI_UNAVAILABLE` | 当前宿主环境不支持 utools.createBrowserWindow |
 | `UI_EVAL_FAILED` | UI 窗口内执行 JS/生命周期或生成快照失败 |
+| `CONFIRM_REQUIRED` | 触发高危开关（allowSideEffects/allowHostModules/reveal）或越出会话目录写截图，需显式传 confirmRisk:true 或 confirmOutPath:true 二次确认 |
 | `BOOT_FAILED` | 开发桥自身启动崩溃，仅暴露 dev_boot_err 诊断工具 |
 <!-- GENERATED:ERROR_CODES:END -->

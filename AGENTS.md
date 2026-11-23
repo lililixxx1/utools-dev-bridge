@@ -24,6 +24,7 @@ npm test                                    # 运行全部 node:test 用例
 node scripts/selftest.js                    # 兼容入口，同上
 node scripts/gen-docs.js                    # 从 contract.js 同步生成 plugin.json/README/SKILL/fallback-ui
 node scripts/gen-docs.js --check            # 校验契约文档无漂移
+npm run pack                                # 生成纯净发行目录 dist/（勿直接打包仓库根目录）
 node scripts/pack-stage.js --dry-run        # 预览分发打包清单
 UTOOLS_MCP_KEY=<key> node scripts/rt-run.js # 真机回归（需在 uTools 开发者工具加载并重载本目录）
 ```

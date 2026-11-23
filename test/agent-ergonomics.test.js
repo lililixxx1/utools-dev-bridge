@@ -132,12 +132,52 @@ describe("Agent 交互效率：内联现场 / 精简清单 / 默认脱敏 / dev_
     assert.equal(ctx.kvCrypto.get("vault"), "OLD_SECRET_VAL", "cleanup 必须还原真实加密前态");
     assert.equal(ctx.kv.get("gh:token"), "OLD_GH_TOKEN", "cleanup 必须还原真实 kv 前态");
 
-    // reveal:true 时放行原文
-    await ctx.tools.dev_load({ path: fx, reveal: true });
+    // reveal:true 未确认必须返回 CONFIRM_REQUIRED
+    const revBlocked = await ctx.tools.dev_load({ path: fx, reveal: true });
+    assert.equal(revBlocked.ok, false);
+    assert.equal(revBlocked.code, "CONFIRM_REQUIRED");
+
+    // 其余高危开关未确认同样返回 CONFIRM_REQUIRED
+    assert.equal((await ctx.tools.dev_load({ path: fx, allowSideEffects: true })).code, "CONFIRM_REQUIRED");
+    assert.equal((await ctx.tools.dev_load({ path: fx, allowHostModules: true })).code, "CONFIRM_REQUIRED");
+    assert.equal((await ctx.tools.dev_load({ path: fx, allowHostModules: ["http"] })).code, "CONFIRM_REQUIRED");
+
+    // 显式 confirmRisk:true 时放行原文并返回风险提示
+    const revOk = await ctx.tools.dev_load({ path: fx, reveal: true, confirmRisk: true });
+    assert.equal(revOk.ok, true);
+    assert.ok(Array.isArray(revOk.riskNotice) && revOk.riskNotice.length >= 1);
+    assert.ok(revOk.warnings.some((w) => w.includes("confirmRisk")));
     const tokRev = await ctx.tools.dev_call({ name: "ergo.getApiToken" });
     assert.equal(tokRev.result, "ghp_raw_secret_token_999999");
     const natRev = await ctx.tools.dev_call({ name: "ergo.readNative", include: ["calls"] });
     assert.equal(natRev.calls.find((c) => c.api === "utools.getNativeId").result, "super-secret-native-id-12345");
+
+    // allowSideEffects + allowHostModules 带 confirmRisk:true 可放行
+    const riskCombo = await ctx.tools.dev_load({
+      path: fx,
+      allowSideEffects: true,
+      allowHostModules: ["http"],
+      confirmRisk: true,
+    });
+    assert.equal(riskCombo.ok, true);
+    assert.equal(riskCombo.riskNotice.length, 2);
+  });
+
+  it("dev_run load 阶段透传高危确认拦截与放行后的 riskNotice", async () => {
+    const blocked = await ctx.tools.dev_run({
+      load: { path: fx, reveal: true },
+      steps: [{ call: "ergo.getApiToken" }],
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.stage, "load");
+    assert.equal(blocked.code, "CONFIRM_REQUIRED");
+
+    const allowed = await ctx.tools.dev_run({
+      load: { path: fx, reveal: true, confirmRisk: true },
+      steps: [{ call: "ergo.getApiToken", expect: { eq: "ghp_raw_secret_token_999999" } }],
+    });
+    assert.equal(allowed.ok, true);
+    assert.ok(Array.isArray(allowed.load.riskNotice) && allowed.load.riskNotice.length === 1);
   });
 
   it("dev_run 批量断言、stopOnFail 跳过与 cleanup:true 自动还原", async () => {

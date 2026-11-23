@@ -92,21 +92,62 @@ describe("真窗口 UI 渲染层测试：dev_ui_open / eval / snapshot / screens
     assert.ok(shot.bytes > 0 && fs.existsSync(shot.path));
     assert.match(shot.dataUrl, /^data:image\/png;base64,/);
 
+    // 传出会话目录外 outPath 未传 confirmOutPath:true 时拒绝，且不创建目录/文件
+    const outsideShot = path.join(ctx.baseDir, "outside-shot-dir", "shot.png");
+    const shotBlocked = await ctx.tools.dev_ui_screenshot({ outPath: outsideShot });
+    assert.equal(shotBlocked.ok, false);
+    assert.equal(shotBlocked.code, "CONFIRM_REQUIRED");
+    assert.equal(fs.existsSync(path.dirname(outsideShot)), false);
+
+    // 显式传 confirmOutPath:true 时允许写入并标记 outsideSessionDir
+    const shotOutsideOk = await ctx.tools.dev_ui_screenshot({ outPath: outsideShot, confirmOutPath: true });
+    assert.equal(shotOutsideOk.ok, true);
+    assert.equal(shotOutsideOk.outsideSessionDir, true);
+    assert.equal(fs.existsSync(outsideShot), true);
+
+    // 高危开关未二次确认时，dev_ui_open 返回 CONFIRM_REQUIRED 且不销毁已打开窗口
+    const uiRiskBlocked = await ctx.tools.dev_ui_open({ path: uiPlugin, allowSideEffects: true });
+    assert.equal(uiRiskBlocked.ok, false);
+    assert.equal(uiRiskBlocked.code, "CONFIRM_REQUIRED");
+    assert.equal((await ctx.tools.dev_list({})).ui.open, true);
+
     const closed = await ctx.tools.dev_ui_close({});
     assert.equal(closed.ok, true);
     assert.equal(closed.closed, true);
     const closedAgain = await ctx.tools.dev_ui_close({});
     assert.equal(closedAgain.closed, false);
 
-    // dev_cleanup 必须一并还原 UI 窗口产生的 db/kv/fs 写
+    // 模拟异常中断遗留的 devbridge-ui-session.json；dev_cleanup 应连同 devbridge-shots 一起清理
+    const sessionFile = path.join(ctx.localDataDir, "devbridge-ui-session.json");
+    const shotsDir = path.join(ctx.localDataDir, "devbridge-shots");
+    fs.writeFileSync(sessionFile, JSON.stringify({ stale: true }));
+    assert.equal(fs.existsSync(shotsDir), true);
+
+    // dev_cleanup 必须一并还原 UI 窗口产生的 db/kv/fs 写，并清理 shots 与残留会话文件
     const cu = await ctx.tools.dev_cleanup({});
     assert.equal(cu.ok, true);
     assert.equal(cu.restored.dbDelete >= 1, true);
     assert.equal(cu.restored.kvDelete >= 1, true);
     assert.equal(cu.restored.fsRestore >= 1, true);
+    assert.equal(cu.restored.uiShotsCleaned >= 1, true);
+    assert.equal(cu.restored.uiSessionCleaned, 1);
+    assert.equal(fs.existsSync(shotsDir), false);
+    assert.equal(fs.existsSync(sessionFile), false);
     assert.equal(fs.existsSync(uiOutFile), false);
     assert.equal(ctx.dbDocs.has("_dev_:ui-doc"), false);
     assert.equal(ctx.kv.has("_dev_:ui-kv"), false);
+
+    // 确认 confirmRisk:true 时 dev_ui_open 可放行高危开关并返回 riskNotice；活跃窗口打开时 dev_cleanup 不误删活跃会话文件
+    const uiRiskOk = await ctx.tools.dev_ui_open({ path: uiPlugin, reveal: true, confirmRisk: true });
+    assert.equal(uiRiskOk.ok, true);
+    assert.ok(Array.isArray(uiRiskOk.riskNotice) && uiRiskOk.riskNotice.length === 1);
+    const shotDuringActive = await ctx.tools.dev_ui_screenshot({});
+    assert.equal(shotDuringActive.ok, true);
+    const cuActive = await ctx.tools.dev_cleanup({});
+    assert.equal(cuActive.restored.uiShotsCleaned >= 1, true);
+    assert.equal(cuActive.restored.uiSessionCleaned, 0);
+    assert.equal(fs.existsSync(sessionFile), true, "活跃窗口未关闭时不应删除会话文件");
+    await ctx.tools.dev_ui_close({});
   });
 
   it("未打开窗口调用 eval/snapshot/screenshot 报 UI_NOT_OPEN；无 CreateBrowserWindow 报 UI_UNAVAILABLE", async () => {

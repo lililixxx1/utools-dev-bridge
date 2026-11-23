@@ -49,6 +49,7 @@ const ERROR_CODES = Object.freeze([
   { code: "UI_NOT_OPEN", meaning: "尚未打开测试 UI 窗口；先调用 dev_ui_open" },
   { code: "UI_UNAVAILABLE", meaning: "当前宿主环境不支持 utools.createBrowserWindow" },
   { code: "UI_EVAL_FAILED", meaning: "UI 窗口内执行 JS/生命周期或生成快照失败" },
+  { code: "CONFIRM_REQUIRED", meaning: "触发高危开关（allowSideEffects/allowHostModules/reveal）或越出会话目录写截图，需显式传 confirmRisk:true 或 confirmOutPath:true 二次确认" },
   { code: "BOOT_FAILED", meaning: "开发桥自身启动崩溃，仅暴露 dev_boot_err 诊断工具" },
 ]);
 
@@ -136,17 +137,18 @@ const FS_JOURNAL_OP_NAMES = new Set([
 const TOOLS = Object.freeze({
   dev_load: {
     summary: "加载或热重载目标插件 preload",
-    keyParams: "`path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`verbose`",
-    description: "在隔离 vm 沙箱加载/热重载目标插件 preload（mode=plugin 读 plugin.json；mode=file 直跑 JS），按 services 级重建。返回 exportsCount/exportsHash（verbose:true 附源码 preview）、events、tools 及拦截 warnings。默认拦截破坏性 API（allowSideEffects 放行）、门控高危内置模块（allowHostModules 放行），并自动脱敏敏感字段（reveal:true 显示原值）。",
+    keyParams: "`path`（必）、`mode`、`allowSideEffects`、`allowHostModules`、`reveal`、`confirmRisk`、`verbose`",
+    description: "在隔离 vm 沙箱加载/热重载目标插件 preload（mode=plugin 读 plugin.json；mode=file 直跑 JS），按 services 级重建。返回 exportsCount/exportsHash（verbose:true 附源码 preview）、events、tools 及拦截 warnings。allowSideEffects/allowHostModules/reveal 为高危放行开关，启用时须同时传 confirmRisk:true 二次确认，否则返回 CONFIRM_REQUIRED。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         path: { type: "string", description: "目标插件根目录(含 plugin.json)或 .js 文件的绝对路径" },
         mode: { type: "string", enum: ["plugin", "file"], default: "plugin", description: "plugin=按插件结构加载;file=直接执行单个 JS 文件" },
-        allowSideEffects: { type: "boolean", default: false, description: "true 时放行破坏性 utools API（剪贴板/键鼠/shell/窗口/AI 等），谨慎使用" },
-        allowHostModules: { type: ["boolean", "array"], items: { type: "string" }, default: false, description: "Node 内置模块门控：true 全放行，数组按名白名单(如 [\"electron\"])，默认 false 懒拒绝" },
-        reveal: { type: "boolean", default: false, description: "true 时关闭日志与返回值的自动凭证脱敏，默认 false" },
+        allowSideEffects: { type: "boolean", default: false, description: "true 时放行破坏性 utools API（剪贴板/键鼠/shell/窗口/AI 等），高危开关须配合 confirmRisk:true" },
+        allowHostModules: { type: ["boolean", "array"], items: { type: "string" }, default: false, description: "Node 内置模块门控：true 全放行或传模块名白名单，高危开关须配合 confirmRisk:true，默认 false 懒拒绝" },
+        reveal: { type: "boolean", default: false, description: "true 时关闭日志与返回值的自动凭证脱敏，高危开关须配合 confirmRisk:true" },
+        confirmRisk: { type: "boolean", default: false, description: "高危开关二次确认：启用 allowSideEffects / allowHostModules / reveal 时必须显式传 true，否则返回 CONFIRM_REQUIRED" },
         verbose: { type: "boolean", default: false, description: "true 时 exports 附带函数源码 preview，默认 false 仅返回精简清单" },
         timeoutMs: { type: "integer", default: 10000, minimum: 1000, maximum: 60000, description: "入口顶层同步执行超时(ms)" },
       },
@@ -192,6 +194,7 @@ const TOOLS = Object.freeze({
             allowSideEffects: { type: "boolean", default: false },
             allowHostModules: { type: ["boolean", "array"], items: { type: "string" }, default: false },
             reveal: { type: "boolean", default: false },
+            confirmRisk: { type: "boolean", default: false },
             timeoutMs: { type: "integer", default: 10000, minimum: 1000, maximum: 60000 },
           },
           required: ["path"],
@@ -293,9 +296,9 @@ const TOOLS = Object.freeze({
     },
   },
   dev_cleanup: {
-    summary: "逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用",
+    summary: "逆序还原 db/dbStorage/dbCryptoStorage/fs 写副作用并清理 UI 缓存",
     keyParams: "`force`、`dropAll`",
-    description: "按 WAL 写日志逆序还原测试期间（含 UI 窗口）的 db/dbStorage/dbCryptoStorage 与 fs 写副作用（越出目标目录的写入在 outsideWrites 单列）。写日志持久存于插件本地数据目录 getPluginLocalDataPath()/devbridge-spill/（7 天弃置清空）。force 放弃失败重试项；dropAll 跳过回放直接清空写日志。",
+    description: "按 WAL 写日志逆序还原测试期间（含 UI 窗口）的 db/dbStorage/dbCryptoStorage 与 fs 写副作用（越界写入在 outsideWrites 单列），并清理会话目录下的截图缓存 devbridge-shots/ 及非活跃会话文件 devbridge-ui-session.json。force 放弃失败重试项；dropAll 跳过回放直接清空写日志。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -307,8 +310,8 @@ const TOOLS = Object.freeze({
   },
   dev_ui_open: {
     summary: "在真实 BrowserWindow 中加载目标插件 UI 与 preload",
-    keyParams: "`path`、`width`、`height`、`show`、`serveHttp`、`enter`",
-    description: "用真实 BrowserWindow 加载目标插件的 main HTML 与可选 preload，并注入桥代理使界面与 preload 调用的 db/kv/fs 副作用可录制可还原。默认隐藏窗口（show:true 可视），自动按需启回环静态服务以兼容 ES Module；可传 enter 在加载后触发 onPluginReady 与 onPluginEnter。",
+    keyParams: "`path`、`width`、`height`、`show`、`serveHttp`、`enter`、`confirmRisk`",
+    description: "用真实 BrowserWindow 加载目标插件的 main HTML 与可选 preload，并注入桥代理使界面与 preload 调用的 db/kv/fs 副作用可录制可还原。默认隐藏窗口（show:true 可视），自动按需启回环静态服务以兼容 ES Module；可传 enter 触发 onPluginReady/Enter。启用 allowSideEffects/allowHostModules/reveal 高危开关须同时传 confirmRisk:true 二次确认。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -320,6 +323,7 @@ const TOOLS = Object.freeze({
         allowSideEffects: { type: "boolean", default: false },
         allowHostModules: { type: ["boolean", "array"], items: { type: "string" }, default: false },
         reveal: { type: "boolean", default: false },
+        confirmRisk: { type: "boolean", default: false, description: "高危开关二次确认：启用 allowSideEffects / allowHostModules / reveal 时必须显式传 true" },
         serveHttp: { type: "boolean", description: "是否强制启用回环静态文件服务；省略时自动检测 ESM/根路径资源" },
         enter: {
           type: "object",
@@ -374,13 +378,14 @@ const TOOLS = Object.freeze({
   },
   dev_ui_screenshot: {
     summary: "截取 UI 窗口画面为 PNG 文件",
-    keyParams: "`outPath`、`rect`、`returnBase64`",
-    description: "调用窗口 capturePage() 截取当前渲染画面并保存为 PNG（默认存至插件本地数据目录 devbridge-shots/），即使 show:false 隐藏窗口也可截图。默认仅返回路径与宽高以节省 token，returnBase64:true 才附带 dataUrl。",
+    keyParams: "`outPath`、`confirmOutPath`、`rect`、`returnBase64`",
+    description: "调用窗口 capturePage() 截取当前渲染画面并保存为 PNG，即使 show:false 隐藏窗口也可截图。默认限制写入插件会话目录 devbridge-shots/ 内（可由 dev_cleanup 自动清理）；若传超出该目录的 outPath 必须同时传 confirmOutPath:true 二次确认，否则返回 CONFIRM_REQUIRED。默认仅返回路径与宽高以节省 token，returnBase64:true 才附带 dataUrl。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        outPath: { type: "string", description: "可选：PNG 输出绝对路径" },
+        outPath: { type: "string", description: "可选：PNG 输出路径（默认在会话目录 devbridge-shots/；超出该目录需同时传 confirmOutPath:true）" },
+        confirmOutPath: { type: "boolean", default: false, description: "二次确认：outPath 超出会话截图目录时必须显式传 true，否则返回 CONFIRM_REQUIRED" },
         rect: {
           type: "object",
           additionalProperties: false,
